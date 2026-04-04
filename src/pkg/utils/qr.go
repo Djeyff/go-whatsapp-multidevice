@@ -51,41 +51,28 @@ func WriteQRWithLogo(content string, size int, path string) error {
 			bgImg.SetRGBA(x, y, colorWhite)
 		}
 	}
-	// Apply a simple corner radius by clearing pixels outside the circle in
-	// each corner (radius ≈ 20 % of bgSize).
+	// Apply corner radius: clear pixels outside the rounded corners.
+	// radius ≈ 20 % of bgSize.
 	r := float64(bgSize) * 0.20
-	cx := []float64{r, float64(bgSize) - r, r, float64(bgSize) - r}
-	cy := []float64{r, r, float64(bgSize) - r, float64(bgSize) - r}
 	for y := 0; y < bgSize; y++ {
 		for x := 0; x < bgSize; x++ {
-			inCorner := false
-			for i := 0; i < 4; i++ {
-				dx := float64(x) - cx[i]
-				dy := float64(y) - cy[i]
-				if dx < 0 && x < int(cx[i]) && dy < 0 && y < int(cy[i]) {
-					// top-left corner region
-					if i == 0 && math.Sqrt(dx*dx+dy*dy) > r {
-						inCorner = true
-					}
-				}
-				if dx > 0 && x > int(cx[i]) && dy < 0 && y < int(cy[i]) {
-					if i == 1 && math.Sqrt(dx*dx+dy*dy) > r {
-						inCorner = true
-					}
-				}
-				if dx < 0 && x < int(cx[i]) && dy > 0 && y > int(cy[i]) {
-					if i == 2 && math.Sqrt(dx*dx+dy*dy) > r {
-						inCorner = true
-					}
-				}
-				if dx > 0 && x > int(cx[i]) && dy > 0 && y > int(cy[i]) {
-					if i == 3 && math.Sqrt(dx*dx+dy*dy) > r {
-						inCorner = true
-					}
-				}
+			fx, fy := float64(x), float64(y)
+			// Nearest corner centre
+			ncx := r
+			if fx > float64(bgSize)/2 {
+				ncx = float64(bgSize) - r
 			}
-			if inCorner {
-				bgImg.SetRGBA(x, y, colorTransparent)
+			ncy := r
+			if fy > float64(bgSize)/2 {
+				ncy = float64(bgSize) - r
+			}
+			// Only apply rounding when inside the corner region
+			if fx < r || fx > float64(bgSize)-r || fy < r || fy > float64(bgSize)-r {
+				dx := fx - ncx
+				dy := fy - ncy
+				if math.Sqrt(dx*dx+dy*dy) > r {
+					bgImg.SetRGBA(x, y, colorTransparent)
+				}
 			}
 		}
 	}
