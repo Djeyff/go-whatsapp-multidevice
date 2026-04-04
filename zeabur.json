@@ -1,0 +1,4 @@
+{
+  "build": { "type": "dockerfile" },
+  "run": { "startCommand": "/app/whatsapp rest" }
+}
