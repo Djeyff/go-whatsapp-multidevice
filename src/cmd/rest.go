@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
@@ -166,6 +168,25 @@ func restServer(_ *cobra.Command, _ []string) {
 
 	// Set auto reconnect checking with a guaranteed client instance
 	startAutoReconnectCheckerIfClientAvailable()
+
+	// Version banner
+	{
+		commitSHA := os.Getenv("COMMIT_SHA")
+		if len(commitSHA) > 8 {
+			commitSHA = commitSHA[:8]
+		}
+		if commitSHA == "" {
+			commitSHA = "dev"
+		}
+		pipelineID := os.Getenv("PIPELINE_ID")
+		if len(pipelineID) > 8 {
+			pipelineID = pipelineID[:8]
+		}
+		if pipelineID == "" {
+			pipelineID = "dev"
+		}
+		logrus.Infof("[version] 🟣 commit=%s pipeline=%s go=%s", commitSHA, pipelineID, runtime.Version())
+	}
 
 	if err := app.Listen(config.AppHost + ":" + config.AppPort); err != nil {
 		logrus.Fatalln("Failed to start: ", err.Error())

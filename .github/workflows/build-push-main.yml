@@ -37,6 +37,8 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          build-args: |
+            COMMIT_SHA=${{ github.sha }}
           tags: |
             ghcr.io/${{ steps.owner.outputs.name }}/go-whatsapp-multidevice:latest
             ghcr.io/${{ steps.owner.outputs.name }}/go-whatsapp-multidevice:${{ github.sha }}

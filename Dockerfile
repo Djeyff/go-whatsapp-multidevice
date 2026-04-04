@@ -9,6 +9,8 @@ COPY src/ .
 RUN go build -ldflags="-w -s" -o /app/whatsapp
 
 FROM alpine:3.21
+ARG COMMIT_SHA=dev
+ENV COMMIT_SHA=$COMMIT_SHA
 RUN apk add --no-cache ffmpeg libwebp-tools tzdata ca-certificates dcron
 WORKDIR /app
 COPY --from=builder /app/whatsapp /app/whatsapp
