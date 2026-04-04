@@ -153,6 +153,14 @@ func (service serviceUser) Avatar(ctx context.Context, request domainUser.Avatar
 		if avatarCtx.Err() == context.DeadlineExceeded {
 			return response, pkgError.ContextError("Error timeout get avatar!")
 		}
+		// Privacy/missing errors are expected — not real failures.
+		// WhatsApp returns 401 when the user has hidden their pic or the
+		// whatsmeow device identity is not recognised as authorised.
+		// Return empty response instead of propagating as an error.
+		if errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) ||
+			errors.Is(err, whatsmeow.ErrProfilePictureNotExist) {
+			return response, nil
+		}
 		// If is_community=true failed, retry with is_community=false as fallback
 		if isCommunity {
 			avatarCtx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
@@ -165,6 +173,10 @@ func (service serviceUser) Avatar(ctx context.Context, request domainUser.Avatar
 			if err != nil {
 				if avatarCtx2.Err() == context.DeadlineExceeded {
 					return response, pkgError.ContextError("Error timeout get avatar!")
+				}
+				if errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) ||
+					errors.Is(err, whatsmeow.ErrProfilePictureNotExist) {
+					return response, nil
 				}
 				return response, err
 			}
