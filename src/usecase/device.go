@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"time"
 
 	domainDevice "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/device"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
@@ -23,6 +24,8 @@ func (s *serviceDevice) ListDevices(_ context.Context) ([]domainDevice.Device, e
 	if s.manager == nil {
 		return []domainDevice.Device{}, nil
 	}
+
+	_ = s.manager.CleanupStaleDevices(time.Now())
 
 	var result []domainDevice.Device
 	for _, inst := range s.manager.ListDevices() {
@@ -127,20 +130,18 @@ func (s *serviceDevice) GetStatus(_ context.Context, deviceID string) (bool, boo
 		return false, false, fmt.Errorf("device manager not initialized")
 	}
 	if inst, ok := s.manager.GetDevice(deviceID); ok {
-		inst.UpdateStateFromClient()
 		client := inst.GetClient()
 		if client == nil {
-			return false, false, nil
+			return false, inst.State() == domainDevice.DeviceStateLoggedOut, nil
 		}
 
 		if client.Store == nil || client.Store.ID == nil {
-			return false, false, nil
+			return false, inst.State() == domainDevice.DeviceStateLoggedOut, nil
 		}
 
 		// Update state snapshot based on live client flags
 		state := deriveState(inst)
-		_ = state
-		return client.IsConnected(), client.IsLoggedIn(), nil
+		return client.IsConnected(), state == domainDevice.DeviceStateLoggedIn, nil
 	}
 	return false, false, fmt.Errorf("device %s not found", deviceID)
 }
@@ -170,12 +171,15 @@ func deriveState(inst *whatsapp.DeviceInstance) domainDevice.DeviceState {
 	client := inst.GetClient()
 	state := inst.State()
 	if client != nil {
-		if client.IsLoggedIn() {
+		switch {
+		case client.IsLoggedIn():
 			state = domainDevice.DeviceStateLoggedIn
-		} else if client.IsConnected() {
+		case client.IsConnected():
 			state = domainDevice.DeviceStateConnected
-		} else {
-			state = domainDevice.DeviceStateDisconnected
+		default:
+			if state != domainDevice.DeviceStateLoggedOut {
+				state = domainDevice.DeviceStateDisconnected
+			}
 		}
 		inst.SetState(state)
 	}

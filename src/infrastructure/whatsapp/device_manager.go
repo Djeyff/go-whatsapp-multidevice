@@ -32,6 +32,8 @@ type DeviceManager struct {
 	initOnce sync.Once
 }
 
+const disconnectedGracePeriod = 30 * time.Minute
+
 func NewDeviceManager(store *sqlstore.Container, keys *sqlstore.Container, chatStorageRepo domainChatStorage.IChatStorageRepository) *DeviceManager {
 	return &DeviceManager{
 		devices: make(map[string]*DeviceInstance),
@@ -128,10 +130,55 @@ func (m *DeviceManager) RemoveDevice(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.devices, id)
+}
 
-	if m.storage != nil && strings.TrimSpace(id) != "" {
+// ForgetDevice drops a device from the active registry and optionally deletes its persisted registry record.
+// It intentionally does not delete chat/message history.
+func (m *DeviceManager) ForgetDevice(id string, deleteRecord bool) {
+	m.mu.Lock()
+	delete(m.devices, id)
+	m.mu.Unlock()
+
+	if deleteRecord && m.storage != nil && strings.TrimSpace(id) != "" {
 		_ = m.storage.DeleteDeviceRecord(id)
 	}
+}
+
+// CleanupStaleDevices removes inactive disconnected devices from the active registry.
+// It keeps logged-out records for explicit reprovision flows, but clears pure stale actives.
+func (m *DeviceManager) CleanupStaleDevices(now time.Time) []string {
+	if m == nil {
+		return nil
+	}
+
+	var removed []string
+	m.mu.RLock()
+	candidates := make([]*DeviceInstance, 0, len(m.devices))
+	for _, inst := range m.devices {
+		candidates = append(candidates, inst)
+	}
+	m.mu.RUnlock()
+
+	for _, inst := range candidates {
+		if inst == nil {
+			continue
+		}
+		inst.UpdateStateFromClient()
+		state := inst.State()
+		if state == domainDevice.DeviceStateLoggedIn || state == domainDevice.DeviceStateConnected || state == domainDevice.DeviceStateConnecting {
+			continue
+		}
+		if state == domainDevice.DeviceStateLoggedOut {
+			continue
+		}
+		if now.Sub(inst.LastSeenAt()) < disconnectedGracePeriod {
+			continue
+		}
+		m.ForgetDevice(inst.ID(), false)
+		removed = append(removed, inst.ID())
+	}
+
+	return removed
 }
 
 // PurgeDevice cleanly logs out a device, removes its persisted records (store/keys),
@@ -204,7 +251,7 @@ func (m *DeviceManager) PurgeDevice(ctx context.Context, deviceID string) error 
 	}
 
 	// Remove from registry last
-	m.RemoveDevice(deviceID)
+	m.ForgetDevice(deviceID, true)
 	return firstErr
 }
 
@@ -496,7 +543,7 @@ func (m *DeviceManager) EnsureClient(ctx context.Context, deviceID string) (*Dev
 	})
 
 	inst.SetOnLoggedOut(func(deviceID string) {
-		m.RemoveDevice(deviceID)
+		m.ForgetDevice(deviceID, true)
 	})
 
 	inst.SetClient(client)

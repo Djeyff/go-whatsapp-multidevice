@@ -158,21 +158,14 @@ func handleLoggedOut(ctx context.Context, instance *DeviceInstance, chatStorageR
 	if client := instance.GetClient(); client != nil {
 		client.Disconnect()
 	}
-	instance.SetState(domainDevice.DeviceStateDisconnected)
-
-	if chatStorageRepo != nil {
-		if err := chatStorageRepo.TruncateAllDataWithLogging("REMOTE_LOGOUT"); err != nil {
-			logrus.Errorf("[REMOTE_LOGOUT] Failed to truncate chat storage: %v", err)
-		}
-	}
+	instance.SetState(domainDevice.DeviceStateLoggedOut)
 
 	deviceID := instance.ID()
-
 	instance.TriggerLoggedOut()
 
 	websocket.Broadcast <- websocket.BroadcastMessage{
 		Code:    "LOGOUT_COMPLETE",
-		Message: "Remote logout cleanup completed - device removed from server",
+		Message: "Remote logout cleanup completed - device marked logged_out",
 		Result:  map[string]string{"device_id": deviceID},
 	}
 }

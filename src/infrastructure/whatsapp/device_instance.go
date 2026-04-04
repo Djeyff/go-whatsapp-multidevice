@@ -20,6 +20,7 @@ type DeviceInstance struct {
 	phoneNumber     string
 	jid             string
 	createdAt       time.Time
+	lastSeenAt      time.Time
 	onLoggedOut     func(deviceID string) // Callback for remote logout cleanup
 }
 
@@ -39,6 +40,7 @@ func NewDeviceInstance(deviceID string, client *whatsmeow.Client, chatStorageRep
 		displayName:     display,
 		jid:             jid,
 		createdAt:       time.Now(),
+		lastSeenAt:      time.Now(),
 	}
 }
 
@@ -61,6 +63,7 @@ func (d *DeviceInstance) GetChatStorage() domainChatStorage.IChatStorageReposito
 func (d *DeviceInstance) SetState(state domainDevice.DeviceState) {
 	d.mu.Lock()
 	d.state = state
+	d.lastSeenAt = time.Now()
 	d.mu.Unlock()
 }
 
@@ -92,6 +95,18 @@ func (d *DeviceInstance) CreatedAt() time.Time {
 	return d.createdAt
 }
 
+func (d *DeviceInstance) LastSeenAt() time.Time {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.lastSeenAt
+}
+
+func (d *DeviceInstance) Touch() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastSeenAt = time.Now()
+}
+
 // SetClient attaches a WhatsApp client to this instance and updates metadata.
 func (d *DeviceInstance) SetClient(client *whatsmeow.Client) {
 	d.mu.Lock()
@@ -99,6 +114,7 @@ func (d *DeviceInstance) SetClient(client *whatsmeow.Client) {
 	d.client = client
 	d.refreshIdentityLocked()
 	d.state = domainDevice.DeviceStateDisconnected
+	d.lastSeenAt = time.Now()
 }
 
 // SetChatStorage swaps the chat storage repository for this device.
@@ -141,9 +157,12 @@ func (d *DeviceInstance) UpdateStateFromClient() domainDevice.DeviceState {
 	case d.client != nil && d.client.IsConnected():
 		d.state = domainDevice.DeviceStateConnected
 	default:
-		d.state = domainDevice.DeviceStateDisconnected
+		if d.state != domainDevice.DeviceStateLoggedOut {
+			d.state = domainDevice.DeviceStateDisconnected
+		}
 	}
 
+	d.lastSeenAt = time.Now()
 	d.refreshIdentityLocked()
 	return d.state
 }

@@ -11,6 +11,7 @@ const (
 	DeviceStateConnecting   DeviceState = "connecting"
 	DeviceStateConnected    DeviceState = "connected"
 	DeviceStateLoggedIn     DeviceState = "logged_in"
+	DeviceStateLoggedOut    DeviceState = "logged_out"
 )
 
 // Device describes a WhatsApp account/device tracked by the system.

@@ -123,7 +123,7 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	if dm != nil && instanceID != "" {
 		dm.EnsureDefault(instance)
 		instance.SetOnLoggedOut(func(deviceID string) {
-			dm.RemoveDevice(deviceID)
+			dm.ForgetDevice(deviceID, true)
 		})
 	}
 
