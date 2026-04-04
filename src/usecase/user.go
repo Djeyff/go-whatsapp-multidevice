@@ -158,7 +158,7 @@ func (service serviceUser) Avatar(ctx context.Context, request domainUser.Avatar
 		// whatsmeow device identity is not recognised as authorised.
 		// Return empty response instead of propagating as an error.
 		if errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) ||
-			errors.Is(err, whatsmeow.ErrProfilePictureNotExist) {
+			errors.Is(err, whatsmeow.ErrProfilePictureNotSet) {
 			return response, nil
 		}
 		// If is_community=true failed, retry with is_community=false as fallback
@@ -175,7 +175,7 @@ func (service serviceUser) Avatar(ctx context.Context, request domainUser.Avatar
 					return response, pkgError.ContextError("Error timeout get avatar!")
 				}
 				if errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) ||
-					errors.Is(err, whatsmeow.ErrProfilePictureNotExist) {
+					errors.Is(err, whatsmeow.ErrProfilePictureNotSet) {
 					return response, nil
 				}
 				return response, err
