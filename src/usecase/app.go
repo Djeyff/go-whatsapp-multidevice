@@ -12,12 +12,12 @@ import (
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
+	pkgUtils "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/websocket"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/validations"
 	fiberUtils "github.com/gofiber/fiber/v2/utils"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
-	"github.com/skip2/go-qrcode"
 	"go.mau.fi/libsignal/logger"
 	"go.mau.fi/whatsmeow"
 )
@@ -79,7 +79,7 @@ func (service *serviceApp) Login(ctx context.Context, deviceID string) (response
 			response.Duration = evt.Timeout / time.Second / 2
 			if evt.Event == "code" {
 				qrPath := fmt.Sprintf("%s/scan-qr-%s.png", config.PathQrCode, fiberUtils.UUIDv4())
-				if err := qrcode.WriteFile(evt.Code, qrcode.Medium, 512, qrPath); err != nil {
+				if err := pkgUtils.WriteQRWithLogo(evt.Code, 512, qrPath); err != nil {
 					logrus.Errorf("[LOGIN][%s] Error when write qr code to file: %v", deviceID, err)
 					continue // Skip sending if QR generation failed
 				}
