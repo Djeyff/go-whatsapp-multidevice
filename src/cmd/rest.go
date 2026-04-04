@@ -130,6 +130,8 @@ func restServer(_ *cobra.Command, _ []string) {
 		rest.InitRestGroup(r, groupUsecase)
 		rest.InitRestNewsletter(r, newsletterUsecase)
 		websocket.RegisterRoutes(r, appUsecase)
+		// Retena media proxy — streams audio bytes without disk write
+		r.Get("/media/stream/:message_id", rest.StreamMedia)
 	}
 
 	// Device management routes (no device_id required)
