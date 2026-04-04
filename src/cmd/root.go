@@ -384,6 +384,10 @@ func initApp() {
 	dm := whatsapp.GetDeviceManager()
 	if dm != nil {
 		_ = dm.LoadExistingDevices(ctx)
+		// Start background reaper: removes stale disconnected devices from the
+		// registry and their persisted device_records after the grace period.
+		// Chat/message history is preserved for account continuity.
+		dm.StartStaleDeviceReaper(ctx)
 	}
 
 	// Usecase

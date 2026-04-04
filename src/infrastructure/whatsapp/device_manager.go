@@ -33,6 +33,7 @@ type DeviceManager struct {
 }
 
 const disconnectedGracePeriod = 30 * time.Minute
+const staleReaperInterval = 5 * time.Minute
 
 func NewDeviceManager(store *sqlstore.Container, keys *sqlstore.Container, chatStorageRepo domainChatStorage.IChatStorageRepository) *DeviceManager {
 	return &DeviceManager{
@@ -179,6 +180,37 @@ func (m *DeviceManager) CleanupStaleDevices(now time.Time) []string {
 	}
 
 	return removed
+}
+
+// StartStaleDeviceReaper launches a background goroutine that periodically
+// removes disconnected devices that have exceeded the grace period.
+// It removes only the device_record (session identity) — chat/message history
+// is intentionally left intact so the Retena account can recover it on reconnect.
+// The goroutine stops when ctx is cancelled.
+func (m *DeviceManager) StartStaleDeviceReaper(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(staleReaperInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				removed := m.CleanupStaleDevices(now)
+				for _, id := range removed {
+					logrus.Infof("[STALE_REAPER] removed stale device %s from registry and persisted records", id)
+					// CleanupStaleDevices already called ForgetDevice(id, false).
+					// Explicitly delete the persisted device_record so it does not
+					// resurface on restart. Chat/message data is NOT touched.
+					if m.storage != nil {
+						if err := m.storage.DeleteDeviceRecord(id); err != nil {
+							logrus.Warnf("[STALE_REAPER] failed to delete device record %s: %v", id, err)
+						}
+					}
+				}
+			}
+		}
+	}()
 }
 
 // PurgeDevice cleanly logs out a device, removes its persisted records (store/keys),
