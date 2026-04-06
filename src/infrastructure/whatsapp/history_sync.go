@@ -2,9 +2,6 @@ package whatsapp
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"os"
 	"sync/atomic"
 	"time"
 
@@ -24,30 +21,10 @@ func handleHistorySync(ctx context.Context, evt *events.HistorySync, chatStorage
 		log.Warnf("Skipping history sync handling: WhatsApp client not initialized")
 		return
 	}
-	id := atomic.AddInt32(&historySyncID, 1)
-	fileName := fmt.Sprintf("%s/history-%d-%s-%d-%s.json",
-		config.PathStorages,
-		startupTime,
-		client.Store.ID.String(),
-		id,
-		evt.Data.SyncType.String(),
-	)
-
-	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		log.Errorf("Failed to open file to write history sync: %v", err)
-		return
+	_ = atomic.AddInt32(&historySyncID, 1)
+	if config.HistorySyncWriteFiles {
+		log.Infof("History sync file persistence enabled, but raw dumps are intentionally suppressed in this build")
 	}
-	defer file.Close()
-
-	enc := json.NewEncoder(file)
-	enc.SetIndent("", "  ")
-	if err = enc.Encode(evt.Data); err != nil {
-		log.Errorf("Failed to write history sync: %v", err)
-		return
-	}
-
-	log.Infof("Wrote history sync to %s", fileName)
 
 	// Process history sync data to database
 	if chatStorageRepo != nil {

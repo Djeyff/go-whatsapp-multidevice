@@ -14,6 +14,7 @@ var (
 	AppBasicAuthCredential []string
 	AppBasePath            = ""
 	AppTrustedProxies      []string // Trusted proxy IP ranges (e.g., "0.0.0.0/0" for all, or specific CIDRs)
+	HistorySyncWriteFiles  = false
 
 	McpPort = "8080"
 	McpHost = "localhost"

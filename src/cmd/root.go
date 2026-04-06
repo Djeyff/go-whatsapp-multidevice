@@ -25,6 +25,7 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/usecase"
+	"github.com/getsentry/sentry-go"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
@@ -78,8 +79,30 @@ func init() {
 }
 
 // initEnvConfig loads configuration from environment variables
+func initSentry() {
+	dsn := os.Getenv("SENTRY_DSN")
+	if dsn == "" {
+		logrus.Warn("[sentry] SENTRY_DSN not set — Sentry disabled")
+		return
+	}
+	err := sentry.Init(sentry.ClientOptions{
+		Dsn:              dsn,
+		Environment:      "production",
+		Release:          os.Getenv("COMMIT_SHA"),
+		TracesSampleRate: 0.2,
+		AttachStacktrace: true,
+	})
+	if err != nil {
+		logrus.Warnf("[sentry] init failed: %v", err)
+		return
+	}
+	logrus.Info("[sentry] initialized")
+}
+
 func initEnvConfig() {
+	initSentry()
 	fmt.Println(viper.AllSettings())
+
 	// Application settings
 	if envPort := viper.GetString("app_port"); envPort != "" {
 		config.AppPort = envPort
@@ -103,6 +126,10 @@ func initEnvConfig() {
 	if envTrustedProxies := viper.GetString("app_trusted_proxies"); envTrustedProxies != "" {
 		proxies := strings.Split(envTrustedProxies, ",")
 		config.AppTrustedProxies = proxies
+	}
+
+	if viper.IsSet("history_sync_write_files") {
+		config.HistorySyncWriteFiles = viper.GetBool("history_sync_write_files")
 	}
 
 	// Database settings
