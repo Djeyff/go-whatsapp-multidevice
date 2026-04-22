@@ -71,6 +71,15 @@ func restServer(_ *cobra.Command, _ []string) {
 		Browse:     true,
 	}))
 
+	app.Use(func(c *fiber.Ctx) error {
+		correlationID := c.Get("X-Correlation-ID")
+		if correlationID == "" {
+			correlationID = fmt.Sprintf("gowa-%d", time.Now().UnixNano())
+		}
+		c.Set("X-Correlation-ID", correlationID)
+		c.Locals("correlation_id", correlationID)
+		return c.Next()
+	})
 	app.Use(middleware.Recovery())
 	app.Use(middleware.RequestTimeout(middleware.DefaultRequestTimeout))
 	app.Use(middleware.BasicAuth())
@@ -121,12 +130,14 @@ func restServer(_ *cobra.Command, _ []string) {
 
 	app.Post("/debug/sentry", func(c *fiber.Ctx) error {
 		message, ok := observability.CaptureSyntheticSentry("go-whatsapp-multidevice", map[string]string{
-			"smoke":   "true",
-			"service": "go-whatsapp-multidevice",
+			"smoke":          "true",
+			"service":        "go-whatsapp-multidevice",
+			"correlation_id": fmt.Sprint(c.Locals("correlation_id")),
 		}, map[string]any{
-			"route":   "/debug/sentry",
-			"version": config.AppVersion,
-			"commit":  firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+			"route":         "/debug/sentry",
+			"version":       config.AppVersion,
+			"commit":        firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+			"correlation_id": fmt.Sprint(c.Locals("correlation_id")),
 		})
 		if !ok {
 			return c.Status(http.StatusPreconditionFailed).JSON(fiber.Map{"ok": false, "error": "Sentry not configured"})
@@ -138,6 +149,7 @@ func restServer(_ *cobra.Command, _ []string) {
 			"message":        message,
 			"version":        config.AppVersion,
 			"commit":         firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+			"correlationId":  fmt.Sprint(c.Locals("correlation_id")),
 		})
 	})
 
