@@ -6,9 +6,13 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/getsentry/sentry-go"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/observability"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/helpers"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/middleware"
@@ -86,9 +90,55 @@ func restServer(_ *cobra.Command, _ []string) {
 	// for infrastructure health probes (Kubernetes liveness/readiness, Docker healthcheck, etc.)
 	app.Get("/health", func(c *fiber.Ctx) error {
 		if dm != nil && dm.IsHealthy() {
-			return c.SendString("OK")
+			return c.JSON(fiber.Map{
+				"ok":      true,
+				"service": "go-whatsapp-multidevice",
+				"version": config.AppVersion,
+				"commit":  firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+			})
 		}
-		return c.Status(http.StatusServiceUnavailable).SendString("Service Unavailable")
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+			"ok":      false,
+			"service": "go-whatsapp-multidevice",
+			"error":   "Service Unavailable",
+		})
+	})
+
+	app.Get("/health/observability", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"ok":            true,
+			"service":       "go-whatsapp-multidevice",
+			"version":       config.AppVersion,
+			"commit":        firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+			"observability": observability.Status(),
+			"smoke": fiber.Map{
+				"sentryCaptureRoute": "/debug/sentry",
+				"healthRoute":        "/health",
+				"observabilityRoute": "/health/observability",
+			},
+		})
+	})
+
+	app.Post("/debug/sentry", func(c *fiber.Ctx) error {
+		message, ok := observability.CaptureSyntheticSentry("go-whatsapp-multidevice", map[string]string{
+			"smoke":   "true",
+			"service": "go-whatsapp-multidevice",
+		}, map[string]any{
+			"route":   "/debug/sentry",
+			"version": config.AppVersion,
+			"commit":  firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+		})
+		if !ok {
+			return c.Status(http.StatusPreconditionFailed).JSON(fiber.Map{"ok": false, "error": "Sentry not configured"})
+		}
+		sentry.Flush(2 * time.Second)
+		return c.JSON(fiber.Map{
+			"ok":             true,
+			"sentryCaptured": true,
+			"message":        message,
+			"version":        config.AppVersion,
+			"commit":         firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+		})
 	})
 
 	// Chatwoot webhook - registered BEFORE basic auth middleware

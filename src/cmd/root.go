@@ -23,6 +23,7 @@ import (
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/observability"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/usecase"
 	"github.com/getsentry/sentry-go"
@@ -63,6 +64,15 @@ var rootCmd = &cobra.Command{
 you can send whatsapp over http api but your whatsapp account have to be multi device version`,
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func init() {
 	// Load environment variables first
 	utils.LoadConfig(".")
@@ -87,8 +97,8 @@ func initSentry() {
 	}
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              dsn,
-		Environment:      "production",
-		Release:          os.Getenv("COMMIT_SHA"),
+		Environment:      firstNonEmpty(os.Getenv("APP_ENV"), os.Getenv("NODE_ENV"), "production"),
+		Release:          firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
 		TracesSampleRate: 0.2,
 		AttachStacktrace: true,
 	})
@@ -100,6 +110,7 @@ func initSentry() {
 }
 
 func initEnvConfig() {
+	observability.Setup("go-whatsapp-multidevice")
 	initSentry()
 	fmt.Println(viper.AllSettings())
 
