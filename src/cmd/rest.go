@@ -113,46 +113,6 @@ func restServer(_ *cobra.Command, _ []string) {
 		})
 	})
 
-	app.Get("/health/observability", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"ok":            true,
-			"service":       "go-whatsapp-multidevice",
-			"version":       config.AppVersion,
-			"commit":        firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
-			"observability": observability.Status(),
-			"smoke": fiber.Map{
-				"sentryCaptureRoute": "/debug/sentry",
-				"healthRoute":        "/health",
-				"observabilityRoute": "/health/observability",
-			},
-		})
-	})
-
-	app.Post("/debug/sentry", func(c *fiber.Ctx) error {
-		message, ok := observability.CaptureSyntheticSentry("go-whatsapp-multidevice", map[string]string{
-			"smoke":          "true",
-			"service":        "go-whatsapp-multidevice",
-			"correlation_id": fmt.Sprint(c.Locals("correlation_id")),
-		}, map[string]any{
-			"route":         "/debug/sentry",
-			"version":       config.AppVersion,
-			"commit":        firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
-			"correlation_id": fmt.Sprint(c.Locals("correlation_id")),
-		})
-		if !ok {
-			return c.Status(http.StatusPreconditionFailed).JSON(fiber.Map{"ok": false, "error": "Sentry not configured"})
-		}
-		sentry.Flush(2 * time.Second)
-		return c.JSON(fiber.Map{
-			"ok":             true,
-			"sentryCaptured": true,
-			"message":        message,
-			"version":        config.AppVersion,
-			"commit":         firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
-			"correlationId":  fmt.Sprint(c.Locals("correlation_id")),
-		})
-	})
-
 	// Chatwoot webhook - registered BEFORE basic auth middleware
 	// This allows Chatwoot to send webhooks without authentication
 	if config.ChatwootEnabled {
@@ -178,6 +138,46 @@ func restServer(_ *cobra.Command, _ []string) {
 			Users: account,
 		}))
 	}
+
+	app.Get("/health/observability", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"ok":            true,
+			"service":       "go-whatsapp-multidevice",
+			"version":       config.AppVersion,
+			"commit":        firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+			"observability": observability.Status(),
+			"smoke": fiber.Map{
+				"sentryCaptureRoute": "/debug/sentry",
+				"healthRoute":        "/health",
+				"observabilityRoute": "/health/observability",
+			},
+		})
+	})
+
+	app.Post("/debug/sentry", func(c *fiber.Ctx) error {
+		message, ok := observability.CaptureSyntheticSentry("go-whatsapp-multidevice", map[string]string{
+			"smoke":          "true",
+			"service":        "go-whatsapp-multidevice",
+			"correlation_id": fmt.Sprint(c.Locals("correlation_id")),
+		}, map[string]any{
+			"route":          "/debug/sentry",
+			"version":        config.AppVersion,
+			"commit":         firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+			"correlation_id": fmt.Sprint(c.Locals("correlation_id")),
+		})
+		if !ok {
+			return c.Status(http.StatusPreconditionFailed).JSON(fiber.Map{"ok": false, "error": "Sentry not configured"})
+		}
+		sentry.Flush(2 * time.Second)
+		return c.JSON(fiber.Map{
+			"ok":             true,
+			"sentryCaptured": true,
+			"message":        message,
+			"version":        config.AppVersion,
+			"commit":         firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+			"correlationId":  fmt.Sprint(c.Locals("correlation_id")),
+		})
+	})
 
 	// Create base path group or use app directly
 	var apiGroup fiber.Router = app

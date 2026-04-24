@@ -72,7 +72,8 @@ type syntheticError struct{ message string }
 func (e *syntheticError) Error() string { return e.message }
 
 func betterStackConfigured() bool {
-	return strings.TrimSpace(os.Getenv("BETTER_STACK_SOURCE_TOKEN")) != "" && strings.TrimSpace(os.Getenv("BETTER_STACK_INGESTING_HOST")) != ""
+	return strings.TrimSpace(firstNonEmpty(os.Getenv("BETTER_STACK_SOURCE_TOKEN"), os.Getenv("BETTERSTACK_SOURCE_TOKEN"))) != "" &&
+		strings.TrimSpace(firstNonEmpty(os.Getenv("BETTER_STACK_INGEST_HOST"), os.Getenv("BETTER_STACK_INGESTING_HOST"), os.Getenv("BETTERSTACK_INGEST_HOST"))) != ""
 }
 
 func newBetterStackHook(service string) (*betterStackHook, error) {
@@ -127,8 +128,8 @@ func (h *betterStackHook) Fire(entry *logrus.Entry) error {
 }
 
 func betterStackEndpoint() string {
-	host := strings.TrimSpace(os.Getenv("BETTER_STACK_INGESTING_HOST"))
-	token := strings.TrimSpace(os.Getenv("BETTER_STACK_SOURCE_TOKEN"))
+	host := strings.TrimSpace(firstNonEmpty(os.Getenv("BETTER_STACK_INGEST_HOST"), os.Getenv("BETTER_STACK_INGESTING_HOST"), os.Getenv("BETTERSTACK_INGEST_HOST")))
+	token := strings.TrimSpace(firstNonEmpty(os.Getenv("BETTER_STACK_SOURCE_TOKEN"), os.Getenv("BETTERSTACK_SOURCE_TOKEN")))
 	if host == "" || token == "" {
 		return ""
 	}
