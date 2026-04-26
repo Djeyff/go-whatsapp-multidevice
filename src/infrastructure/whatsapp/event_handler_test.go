@@ -33,16 +33,16 @@ func TestResolvePresenceOnConnect(t *testing.T) {
 			wantSkip:  true,
 		},
 		{
-			name:      "empty string defaults to unavailable",
+			name:      "empty string skips sending presence",
 			configVal: "",
-			wantPres:  types.PresenceUnavailable,
-			wantSkip:  false,
+			wantPres:  "",
+			wantSkip:  true,
 		},
 		{
-			name:      "unknown value defaults to unavailable",
+			name:      "unknown value skips sending presence",
 			configVal: "garbage",
-			wantPres:  types.PresenceUnavailable,
-			wantSkip:  false,
+			wantPres:  "",
+			wantSkip:  true,
 		},
 	}
 

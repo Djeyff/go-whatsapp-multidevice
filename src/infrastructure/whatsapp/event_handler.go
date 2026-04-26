@@ -116,8 +116,10 @@ func resolvePresenceOnConnect() (types.Presence, bool) {
 		return types.PresenceAvailable, false
 	case "none":
 		return "", true
-	default:
+	case "unavailable":
 		return types.PresenceUnavailable, false
+	default:
+		return "", true
 	}
 }
 

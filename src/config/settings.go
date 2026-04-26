@@ -5,16 +5,17 @@ import (
 )
 
 var (
-	AppVersion             = "v8.3.5"
-	AppPort                = "3000"
-	AppHost                = "0.0.0.0"
-	AppDebug               = false
-	AppOs                  = "GOWA"
-	AppPlatform            = waCompanionReg.DeviceProps_PlatformType(1)
-	AppBasicAuthCredential []string
-	AppBasePath            = ""
-	AppTrustedProxies      []string // Trusted proxy IP ranges (e.g., "0.0.0.0/0" for all, or specific CIDRs)
-	HistorySyncWriteFiles  = false
+	AppVersion                = "v8.3.5"
+	AppPort                   = "3000"
+	AppHost                   = "0.0.0.0"
+	AppDebug                  = false
+	AppOs                     = "GOWA"
+	AppPlatform               = waCompanionReg.DeviceProps_PlatformType(1)
+	AppBasicAuthCredential    []string
+	AppBasePath               = ""
+	AppTrustedProxies         []string // Trusted proxy IP ranges (e.g., "0.0.0.0/0" for all, or specific CIDRs)
+	HistorySyncWriteFiles     = false
+	RetenaPassiveListenerMode = true
 
 	McpPort = "8080"
 	McpHost = "localhost"
@@ -29,7 +30,7 @@ var (
 
 	WhatsappAutoReplyMessage          string
 	WhatsappAutoMarkRead              = false // Auto-mark incoming messages as read
-	WhatsappAutoDownloadMedia         = true  // Auto-download media from incoming messages
+	WhatsappAutoDownloadMedia         = false // Auto-download media from incoming messages
 	WhatsappWebhook                   []string
 	WhatsappWebhookSecret             = "secret"
 	WhatsappWebhookInsecureSkipVerify = false          // Skip TLS certificate verification for webhooks (insecure)
@@ -44,7 +45,7 @@ var (
 	WhatsappTypeGroup                          = "@g.us"
 	WhatsappTypeLid                            = "@lid"
 	WhatsappAccountValidation                  = true
-	WhatsappPresenceOnConnect                  = "unavailable" // Presence to send on connect: "available", "unavailable", or "none"
+	WhatsappPresenceOnConnect                  = "none" // Presence to send on connect: "available", "unavailable", or "none"
 
 	ChatStorageURI               = "file:storages/chatstorage.db"
 	ChatStorageEnableForeignKeys = true

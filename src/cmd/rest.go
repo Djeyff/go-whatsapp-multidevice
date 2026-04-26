@@ -39,6 +39,24 @@ var restCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(restCmd)
 }
+
+func passiveListenerGuard(c *fiber.Ctx) error {
+	if !config.RetenaPassiveListenerMode {
+		return c.Next()
+	}
+
+	switch c.Method() {
+	case fiber.MethodGet, fiber.MethodHead, fiber.MethodOptions:
+		return c.Next()
+	default:
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"code":    "PASSIVE_LISTENER_MODE",
+			"message": "Retena passive listener mode blocks outbound and mutating WhatsApp routes",
+			"path":    c.Path(),
+		})
+	}
+}
+
 func restServer(_ *cobra.Command, _ []string) {
 	engine := html.NewFileSystem(http.FS(EmbedIndex), ".html")
 	engine.AddFunc("isEnableBasicAuth", func(token any) bool {
@@ -202,7 +220,7 @@ func restServer(_ *cobra.Command, _ []string) {
 	rest.InitRestDevice(apiGroup, deviceUsecase)
 
 	// Device-scoped operations (header-based)
-	headerDeviceGroup := apiGroup.Group("", middleware.DeviceMiddleware(dm))
+	headerDeviceGroup := apiGroup.Group("", middleware.DeviceMiddleware(dm), passiveListenerGuard)
 	registerDeviceScopedRoutes(headerDeviceGroup)
 
 	// Chatwoot sync routes - require authentication (webhook is registered earlier without auth)

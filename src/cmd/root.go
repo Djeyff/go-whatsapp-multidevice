@@ -142,6 +142,9 @@ func initEnvConfig() {
 	if viper.IsSet("history_sync_write_files") {
 		config.HistorySyncWriteFiles = viper.GetBool("history_sync_write_files")
 	}
+	if viper.IsSet("retena_passive_listener_mode") {
+		config.RetenaPassiveListenerMode = viper.GetBool("retena_passive_listener_mode")
+	}
 
 	// Database settings
 	if envDBURI := viper.GetString("db_uri"); envDBURI != "" {
@@ -273,6 +276,12 @@ func initFlags() {
 		config.DBKeysURI,
 		`the database uri to store the keys database uri (by default, we'll use the same database uri). database uri --db-keys-uri <string> | example: --db-keys-uri="file::memory:?cache=shared&_foreign_keys=on"`,
 	)
+	rootCmd.PersistentFlags().BoolVarP(
+		&config.RetenaPassiveListenerMode,
+		"retena-passive-listener-mode", "",
+		config.RetenaPassiveListenerMode,
+		`block outbound/mutating WhatsApp routes for Retena passive capture --retena-passive-listener-mode <true/false> | example: --retena-passive-listener-mode=true`,
+	)
 
 	// WhatsApp flags
 	rootCmd.PersistentFlags().StringVarP(
@@ -333,7 +342,7 @@ func initFlags() {
 		&config.WhatsappPresenceOnConnect,
 		"presence-on-connect", "",
 		config.WhatsappPresenceOnConnect,
-		`presence to send on connect: "available", "unavailable", or "none" --presence-on-connect <string> | example: --presence-on-connect="unavailable"`,
+		`presence to send on connect: "available", "unavailable", or "none" --presence-on-connect <string> | example: --presence-on-connect="none"`,
 	)
 
 	// Chatwoot flags
