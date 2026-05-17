@@ -545,6 +545,7 @@ func (m *DeviceManager) EnsureClient(ctx context.Context, deviceID string) (*Dev
 	inst := m.ensureInstance(deviceID)
 	if existing := inst.GetClient(); existing != nil {
 		inst.UpdateStateFromClient()
+		m.refreshDeviceChatStorage(inst)
 		return inst, nil
 	}
 
@@ -571,7 +572,10 @@ func (m *DeviceManager) EnsureClient(ctx context.Context, deviceID string) (*Dev
 	}
 
 	client.AddEventHandler(func(rawEvt interface{}) {
+		inst.UpdateStateFromClient()
+		m.refreshDeviceChatStorage(inst)
 		handler(ctx, inst, rawEvt)
+		m.refreshDeviceChatStorage(inst)
 	})
 
 	inst.SetOnLoggedOut(func(deviceID string) {
@@ -580,8 +584,33 @@ func (m *DeviceManager) EnsureClient(ctx context.Context, deviceID string) (*Dev
 
 	inst.SetClient(client)
 	inst.UpdateStateFromClient()
+	m.refreshDeviceChatStorage(inst)
 
 	return inst, nil
+}
+
+func (m *DeviceManager) refreshDeviceChatStorage(inst *DeviceInstance) {
+	if m == nil || inst == nil || m.storage == nil {
+		return
+	}
+	refreshDeviceChatStorageFromIdentity(inst, m.storage)
+}
+
+func refreshDeviceChatStorageFromIdentity(inst *DeviceInstance, base domainChatStorage.IChatStorageRepository) {
+	if inst == nil || base == nil {
+		return
+	}
+	storageDeviceID := inst.JID()
+	if storageDeviceID == "" {
+		storageDeviceID = inst.ID()
+	}
+	if storageDeviceID == "" {
+		return
+	}
+	if current, ok := inst.GetChatStorage().(*deviceChatStorage); ok && current.deviceID == storageDeviceID {
+		return
+	}
+	inst.SetChatStorage(newDeviceChatStorage(storageDeviceID, base))
 }
 
 func (m *DeviceManager) ensureInstance(deviceID string) *DeviceInstance {

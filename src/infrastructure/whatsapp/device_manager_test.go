@@ -109,3 +109,19 @@ func TestListDevices_SameCreatedAt(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshDeviceChatStorageFromIdentitySwitchesFromPlaceholderToJID(t *testing.T) {
+	base := &deviceChatStorage{deviceID: "base"}
+	instance := NewDeviceInstance("device-placeholder", nil, newDeviceChatStorage("device-placeholder", base))
+	instance.jid = "15551234567@s.whatsapp.net"
+
+	refreshDeviceChatStorageFromIdentity(instance, base)
+
+	storage, ok := instance.GetChatStorage().(*deviceChatStorage)
+	if !ok {
+		t.Fatalf("expected deviceChatStorage, got %T", instance.GetChatStorage())
+	}
+	if storage.deviceID != instance.jid {
+		t.Fatalf("expected storage device id %q, got %q", instance.jid, storage.deviceID)
+	}
+}

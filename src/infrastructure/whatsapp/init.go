@@ -111,7 +111,10 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	instance := NewDeviceInstance(instanceID, client, deviceRepo)
 
 	client.AddEventHandler(func(rawEvt interface{}) {
+		instance.UpdateStateFromClient()
+		refreshDeviceChatStorageFromIdentity(instance, chatStorageRepo)
 		handler(ctx, instance, rawEvt)
+		refreshDeviceChatStorageFromIdentity(instance, chatStorageRepo)
 	})
 
 	// Register device instance in the manager for multi-device awareness
