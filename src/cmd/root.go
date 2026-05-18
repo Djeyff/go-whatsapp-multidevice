@@ -148,6 +148,9 @@ func initEnvConfig() {
 	if viper.IsSet("retena_passive_presence_heartbeat") {
 		config.RetenaPassivePresenceHeartbeat = viper.GetBool("retena_passive_presence_heartbeat")
 	}
+	if viper.IsSet("retena_passive_presence_available_heartbeat") {
+		config.RetenaPassivePresenceAvailableHeartbeat = viper.GetBool("retena_passive_presence_available_heartbeat")
+	}
 
 	// Database settings
 	if envDBURI := viper.GetString("db_uri"); envDBURI != "" {
@@ -290,6 +293,12 @@ func initFlags() {
 		"retena-passive-presence-heartbeat", "",
 		config.RetenaPassivePresenceHeartbeat,
 		`allow only unavailable /send/presence while passive listener mode blocks other mutating routes --retena-passive-presence-heartbeat <true/false> | example: --retena-passive-presence-heartbeat=true`,
+	)
+	rootCmd.PersistentFlags().BoolVarP(
+		&config.RetenaPassivePresenceAvailableHeartbeat,
+		"retena-passive-presence-available-heartbeat", "",
+		config.RetenaPassivePresenceAvailableHeartbeat,
+		`also allow available /send/presence for targeted Retena inactivity canaries while passive listener mode blocks other mutating routes --retena-passive-presence-available-heartbeat <true/false> | example: --retena-passive-presence-available-heartbeat=false`,
 	)
 
 	// WhatsApp flags

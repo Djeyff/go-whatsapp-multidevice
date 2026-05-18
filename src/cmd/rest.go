@@ -50,7 +50,14 @@ func passivePresenceHeartbeatAllowed(c *fiber.Ctx) bool {
 	if err := json.Unmarshal(c.Body(), &request); err != nil {
 		request.Type = c.FormValue("type")
 	}
-	return strings.EqualFold(strings.TrimSpace(request.Type), "unavailable")
+	switch strings.ToLower(strings.TrimSpace(request.Type)) {
+	case "unavailable":
+		return true
+	case "available":
+		return config.RetenaPassivePresenceAvailableHeartbeat
+	default:
+		return false
+	}
 }
 
 // rootCmd represents the base command when called without any subcommands
