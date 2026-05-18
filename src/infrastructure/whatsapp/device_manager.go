@@ -633,6 +633,14 @@ func (m *DeviceManager) loadFromRegistry(records []*domainChatStorage.DeviceReco
 		}
 		instance := NewDeviceInstance(rec.DeviceID, nil, newDeviceChatStorage(storageDeviceID, m.storage))
 		instance.SetState(domainDevice.DeviceStateDisconnected)
+		if !rec.CreatedAt.IsZero() {
+			instance.createdAt = rec.CreatedAt
+		}
+		if !rec.UpdatedAt.IsZero() {
+			instance.lastSeenAt = rec.UpdatedAt
+		} else {
+			instance.lastSeenAt = instance.createdAt
+		}
 		instance.displayName = rec.DisplayName
 		instance.jid = rec.JID
 
@@ -644,7 +652,9 @@ func (m *DeviceManager) loadFromRegistry(records []*domainChatStorage.DeviceReco
 			}
 		}
 
-		m.AddDevice(instance)
+		m.mu.Lock()
+		m.devices[instance.ID()] = instance
+		m.mu.Unlock()
 	}
 }
 

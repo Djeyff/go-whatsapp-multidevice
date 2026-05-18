@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
 	domainDevice "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/device"
 )
 
@@ -93,5 +94,29 @@ func TestCleanupStaleDevicesDryRunAndCap(t *testing.T) {
 		if _, ok := manager.GetDevice(id); !ok {
 			t.Fatalf("expected dry-run to keep %s in manager", id)
 		}
+	}
+}
+
+func TestLoadFromRegistryPreservesRecordTimestampsForCleanup(t *testing.T) {
+	now := time.Now()
+	createdAt := now.Add(-4 * time.Hour)
+	updatedAt := now.Add(-2 * time.Hour)
+	manager := &DeviceManager{devices: make(map[string]*DeviceInstance)}
+
+	manager.loadFromRegistry([]*domainChatStorage.DeviceRecord{{
+		DeviceID:  "stale-registry-device",
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}})
+
+	instance, ok := manager.GetDevice("stale-registry-device")
+	if !ok {
+		t.Fatal("expected device to load from registry")
+	}
+	if !instance.CreatedAt().Equal(createdAt) {
+		t.Fatalf("expected createdAt %s, got %s", createdAt, instance.CreatedAt())
+	}
+	if !instance.LastSeenAt().Equal(updatedAt) {
+		t.Fatalf("expected lastSeenAt %s, got %s", updatedAt, instance.LastSeenAt())
 	}
 }
