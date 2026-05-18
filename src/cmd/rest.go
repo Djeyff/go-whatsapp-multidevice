@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -28,6 +29,30 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func passivePresenceHeartbeatPath() string {
+	base := strings.TrimRight(config.AppBasePath, "/")
+	if base == "" {
+		return "/send/presence"
+	}
+	return base + "/send/presence"
+}
+
+func passivePresenceHeartbeatAllowed(c *fiber.Ctx) bool {
+	if !config.RetenaPassivePresenceHeartbeat {
+		return false
+	}
+	if c.Method() != fiber.MethodPost || strings.TrimRight(c.Path(), "/") != passivePresenceHeartbeatPath() {
+		return false
+	}
+	var request struct {
+		Type string `json:"type" form:"type"`
+	}
+	if err := json.Unmarshal(c.Body(), &request); err != nil {
+		request.Type = c.FormValue("type")
+	}
+	return strings.EqualFold(strings.TrimSpace(request.Type), "unavailable")
+}
+
 // rootCmd represents the base command when called without any subcommands
 var restCmd = &cobra.Command{
 	Use:   "rest",
@@ -48,13 +73,17 @@ func passiveListenerGuard(c *fiber.Ctx) error {
 	switch c.Method() {
 	case fiber.MethodGet, fiber.MethodHead, fiber.MethodOptions:
 		return c.Next()
+	case fiber.MethodPost:
+		if passivePresenceHeartbeatAllowed(c) {
+			return c.Next()
+		}
 	default:
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"code":    "PASSIVE_LISTENER_MODE",
-			"message": "Retena passive listener mode blocks outbound and mutating WhatsApp routes",
-			"path":    c.Path(),
-		})
 	}
+	return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+		"code":    "PASSIVE_LISTENER_MODE",
+		"message": "Retena passive listener mode blocks outbound and mutating WhatsApp routes",
+		"path":    c.Path(),
+	})
 }
 
 func restServer(_ *cobra.Command, _ []string) {

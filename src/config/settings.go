@@ -5,17 +5,18 @@ import (
 )
 
 var (
-	AppVersion                = "v8.3.5"
-	AppPort                   = "3000"
-	AppHost                   = "0.0.0.0"
-	AppDebug                  = false
-	AppOs                     = "GOWA"
-	AppPlatform               = waCompanionReg.DeviceProps_PlatformType(1)
-	AppBasicAuthCredential    []string
-	AppBasePath               = ""
-	AppTrustedProxies         []string // Trusted proxy IP ranges (e.g., "0.0.0.0/0" for all, or specific CIDRs)
-	HistorySyncWriteFiles     = false
-	RetenaPassiveListenerMode = true
+	AppVersion                     = "v8.3.5"
+	AppPort                        = "3000"
+	AppHost                        = "0.0.0.0"
+	AppDebug                       = false
+	AppOs                          = "GOWA"
+	AppPlatform                    = waCompanionReg.DeviceProps_PlatformType(1)
+	AppBasicAuthCredential         []string
+	AppBasePath                    = ""
+	AppTrustedProxies              []string // Trusted proxy IP ranges (e.g., "0.0.0.0/0" for all, or specific CIDRs)
+	HistorySyncWriteFiles          = false
+	RetenaPassiveListenerMode      = true
+	RetenaPassivePresenceHeartbeat = false
 
 	McpPort = "8080"
 	McpHost = "localhost"

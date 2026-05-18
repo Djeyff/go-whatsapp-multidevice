@@ -145,6 +145,9 @@ func initEnvConfig() {
 	if viper.IsSet("retena_passive_listener_mode") {
 		config.RetenaPassiveListenerMode = viper.GetBool("retena_passive_listener_mode")
 	}
+	if viper.IsSet("retena_passive_presence_heartbeat") {
+		config.RetenaPassivePresenceHeartbeat = viper.GetBool("retena_passive_presence_heartbeat")
+	}
 
 	// Database settings
 	if envDBURI := viper.GetString("db_uri"); envDBURI != "" {
@@ -281,6 +284,12 @@ func initFlags() {
 		"retena-passive-listener-mode", "",
 		config.RetenaPassiveListenerMode,
 		`block outbound/mutating WhatsApp routes for Retena passive capture --retena-passive-listener-mode <true/false> | example: --retena-passive-listener-mode=true`,
+	)
+	rootCmd.PersistentFlags().BoolVarP(
+		&config.RetenaPassivePresenceHeartbeat,
+		"retena-passive-presence-heartbeat", "",
+		config.RetenaPassivePresenceHeartbeat,
+		`allow only unavailable /send/presence while passive listener mode blocks other mutating routes --retena-passive-presence-heartbeat <true/false> | example: --retena-passive-presence-heartbeat=true`,
 	)
 
 	// WhatsApp flags
