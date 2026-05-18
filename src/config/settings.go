@@ -18,6 +18,9 @@ var (
 	RetenaPassiveListenerMode               = true
 	RetenaPassivePresenceHeartbeat          = false
 	RetenaPassivePresenceAvailableHeartbeat = false
+	RetenaStaleDeviceCleanupGraceMinutes    = 30
+	RetenaStaleDeviceCleanupMaxPerRun       = 25
+	RetenaProtectedGowaDeviceIDs            []string
 
 	McpPort = "8080"
 	McpHost = "localhost"

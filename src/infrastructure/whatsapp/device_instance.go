@@ -62,8 +62,10 @@ func (d *DeviceInstance) GetChatStorage() domainChatStorage.IChatStorageReposito
 
 func (d *DeviceInstance) SetState(state domainDevice.DeviceState) {
 	d.mu.Lock()
+	if shouldRefreshDeviceLastSeen(d.state, state) {
+		d.lastSeenAt = time.Now()
+	}
 	d.state = state
-	d.lastSeenAt = time.Now()
 	d.mu.Unlock()
 }
 
@@ -151,20 +153,33 @@ func (d *DeviceInstance) UpdateStateFromClient() domainDevice.DeviceState {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	previousState := d.state
+	nextState := d.state
 	switch {
 	case d.client != nil && d.client.IsLoggedIn():
-		d.state = domainDevice.DeviceStateLoggedIn
+		nextState = domainDevice.DeviceStateLoggedIn
 	case d.client != nil && d.client.IsConnected():
-		d.state = domainDevice.DeviceStateConnected
+		nextState = domainDevice.DeviceStateConnected
 	default:
 		if d.state != domainDevice.DeviceStateLoggedOut {
-			d.state = domainDevice.DeviceStateDisconnected
+			nextState = domainDevice.DeviceStateDisconnected
 		}
 	}
 
-	d.lastSeenAt = time.Now()
+	if shouldRefreshDeviceLastSeen(previousState, nextState) {
+		d.lastSeenAt = time.Now()
+	}
+	d.state = nextState
 	d.refreshIdentityLocked()
 	return d.state
+}
+
+func shouldRefreshDeviceLastSeen(previousState, nextState domainDevice.DeviceState) bool {
+	switch nextState {
+	case domainDevice.DeviceStateLoggedIn, domainDevice.DeviceStateConnected, domainDevice.DeviceStateConnecting:
+		return true
+	}
+	return previousState != nextState
 }
 
 func (d *DeviceInstance) refreshIdentityLocked() {

@@ -151,6 +151,18 @@ func initEnvConfig() {
 	if viper.IsSet("retena_passive_presence_available_heartbeat") {
 		config.RetenaPassivePresenceAvailableHeartbeat = viper.GetBool("retena_passive_presence_available_heartbeat")
 	}
+	if viper.IsSet("retena_stale_device_cleanup_grace_minutes") {
+		config.RetenaStaleDeviceCleanupGraceMinutes = viper.GetInt("retena_stale_device_cleanup_grace_minutes")
+	}
+	if viper.IsSet("retena_stale_device_cleanup_max_per_run") {
+		config.RetenaStaleDeviceCleanupMaxPerRun = viper.GetInt("retena_stale_device_cleanup_max_per_run")
+	}
+	if protectedIDs := viper.GetString("retena_protected_gowa_device_ids"); protectedIDs != "" {
+		config.RetenaProtectedGowaDeviceIDs = strings.Split(protectedIDs, ",")
+	}
+	if protectedDeviceID := viper.GetString("gowa_device_id"); protectedDeviceID != "" {
+		config.RetenaProtectedGowaDeviceIDs = append(config.RetenaProtectedGowaDeviceIDs, protectedDeviceID)
+	}
 
 	// Database settings
 	if envDBURI := viper.GetString("db_uri"); envDBURI != "" {

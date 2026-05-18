@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"fmt"
-	"time"
 
 	domainDevice "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/device"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
@@ -24,8 +23,6 @@ func (s *serviceDevice) ListDevices(_ context.Context) ([]domainDevice.Device, e
 	if s.manager == nil {
 		return []domainDevice.Device{}, nil
 	}
-
-	_ = s.manager.CleanupStaleDevices(time.Now())
 
 	var result []domainDevice.Device
 	for _, inst := range s.manager.ListDevices() {

@@ -13,25 +13,53 @@ export default {
             deviceIdInput: '',
             isCreatingDevice: false,
             deviceToDelete: { id: '', jid: '', state: '' },
-            isDeleting: false
+            isDeleting: false,
+            showDisconnectedDevices: false
         }
     },
     computed: {
         selectedDevice() {
             if (!this.selectedDeviceId) return null;
-            return this.deviceList.find(d => (d.id || d.device) === this.selectedDeviceId) || null;
+            return this.deviceList.find(d => this.deviceId(d) === this.selectedDeviceId) || null;
         },
         isSelectedDeviceLoggedIn() {
             return this.selectedDevice?.state === 'logged_in';
+        },
+        hiddenDisconnectedDevices() {
+            return this.deviceList.filter(dev => this.isDisconnectedDevice(dev) && !this.isSelectedDevice(this.deviceId(dev)));
+        },
+        hiddenDisconnectedCount() {
+            return this.hiddenDisconnectedDevices.length;
+        },
+        visibleDevices() {
+            if (this.showDisconnectedDevices) return this.deviceList;
+            return this.deviceList.filter(dev => {
+                const deviceId = this.deviceId(dev);
+                return !this.isDisconnectedDevice(dev) || this.selectedDeviceId === deviceId;
+            });
         }
     },
     methods: {
+        deviceId(dev) {
+            return dev?.id || dev?.device || '';
+        },
+        deviceState(dev) {
+            return String(dev?.state || dev?.status || 'unknown').toLowerCase();
+        },
+        isSelectedDevice(deviceId) {
+            return this.selectedDeviceId === deviceId;
+        },
+        isDisconnectedDevice(dev) {
+            const state = this.deviceState(dev);
+            return state === 'disconnected' || state === 'logged_out';
+        },
         async fetchDevices() {
             try {
                 const res = await window.http.get(`/devices`);
                 this.deviceList = res.data.results || [];
                 if (!this.selectedDeviceId && this.deviceList.length > 0) {
-                    const first = this.deviceList[0].id || this.deviceList[0].device;
+                    const firstActive = this.deviceList.find(dev => !this.isDisconnectedDevice(dev));
+                    const first = this.deviceId(firstActive || this.deviceList[0]);
                     this.setDeviceContext(first);
                 }
                 // Emit devices to parent for other components
@@ -72,7 +100,7 @@ export default {
             this.setDeviceContext(this.deviceIdInput);
         },
         openDeleteModal(deviceId, jid) {
-            const device = this.deviceList.find(d => (d.id || d.device) === deviceId);
+            const device = this.deviceList.find(d => this.deviceId(d) === deviceId);
             this.deviceToDelete = { id: deviceId, jid: jid || '', state: device?.state || '' };
             $('#deleteDeviceModal').modal({
                 closable: false,
@@ -166,12 +194,17 @@ export default {
                 </div>
                 <div class="ui divider"></div>
                 
-                <!-- Device List -->
-                <div class="ui relaxed list" v-if="deviceList.length">
-                    <div class="item" v-for="dev in deviceList" :key="dev.id || dev.device">
+        <!-- Device List -->
+                <div class="ui clearing basic segment" style="padding: 0; box-shadow: none;" v-if="hiddenDisconnectedCount || showDisconnectedDevices">
+                    <button class="ui mini button right floated" @click="showDisconnectedDevices = !showDisconnectedDevices">
+                        {{ showDisconnectedDevices ? 'Hide disconnected' : 'Show disconnected (' + hiddenDisconnectedCount + ')' }}
+                    </button>
+                </div>
+                <div class="ui relaxed list" v-if="visibleDevices.length">
+                    <div class="item" v-for="dev in visibleDevices" :key="deviceId(dev)">
                         <i class="mobile alternate icon"></i>
                         <div class="content">
-                            <div class="header">{{ dev.id || dev.device }}</div>
+                            <div class="header">{{ deviceId(dev) }}</div>
                             <div class="description">
                                 <span>State: {{ dev.state || 'unknown' }}</span>
                                 <span v-if="dev.jid"> · JID: {{ dev.jid }}</span>
@@ -179,17 +212,20 @@ export default {
                         </div>
                         <div class="right floated content">
                             <button class="ui mini button" 
-                                    :class="{active: selectedDeviceId === (dev.id || dev.device)}"
-                                    @click="setDeviceContext(dev.id || dev.device)">
-                                {{ selectedDeviceId === (dev.id || dev.device) ? 'Selected' : 'Use' }}
+                                    :class="{active: isSelectedDevice(deviceId(dev))}"
+                                    @click="setDeviceContext(deviceId(dev))">
+                                {{ isSelectedDevice(deviceId(dev)) ? 'Selected' : 'Use' }}
                             </button>
-                            <button class="ui mini red icon button" 
-                                    @click="openDeleteModal(dev.id || dev.device, dev.jid)" 
-                                    :class="{loading: isDeleting && deviceToDelete.id === (dev.id || dev.device)}">
+                            <button class="ui mini red icon button"
+                                    @click="openDeleteModal(deviceId(dev), dev.jid)"
+                                    :class="{loading: isDeleting && deviceToDelete.id === deviceId(dev)}">
                                 <i class="trash icon" style="margin: 0;"></i>
                             </button>
                         </div>
                     </div>
+                </div>
+                <div class="ui message" v-else-if="deviceList.length">
+                    Only disconnected devices are hidden.
                 </div>
                 <div class="ui message" v-else>
                     No devices yet. Create one to begin.

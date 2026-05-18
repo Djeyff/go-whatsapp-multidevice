@@ -2,6 +2,8 @@ package whatsapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -34,6 +36,32 @@ type DeviceManager struct {
 
 const disconnectedGracePeriod = 30 * time.Minute
 const staleReaperInterval = 5 * time.Minute
+const staleReaperMaxRemovalsPerRun = 25
+
+type StaleDeviceCleanupOptions struct {
+	GracePeriod        time.Duration
+	MaxRemovals        int
+	ProtectedDeviceIDs map[string]bool
+	DryRun             bool
+	DeleteRecords      bool
+}
+
+type StaleDeviceCleanupReport struct {
+	Scanned          int
+	Candidates       int
+	Removed          int
+	RemovedIDs       []string
+	SkippedActive    int
+	SkippedGrace     int
+	SkippedLoggedOut int
+	SkippedProtected int
+	SkippedInvalid   int
+	SkippedByCap     int
+	DryRun           bool
+	DeleteRecords    bool
+	MaxRemovals      int
+	GracePeriod      time.Duration
+}
 
 func NewDeviceManager(store *sqlstore.Container, keys *sqlstore.Container, chatStorageRepo domainChatStorage.IChatStorageRepository) *DeviceManager {
 	return &DeviceManager{
@@ -148,11 +176,28 @@ func (m *DeviceManager) ForgetDevice(id string, deleteRecord bool) {
 // CleanupStaleDevices removes inactive disconnected devices from the active registry.
 // It keeps logged-out records for explicit reprovision flows, but clears pure stale actives.
 func (m *DeviceManager) CleanupStaleDevices(now time.Time) []string {
-	if m == nil {
-		return nil
+	report := m.CleanupStaleDevicesWithOptions(now, StaleDeviceCleanupOptions{
+		GracePeriod:        defaultStaleDeviceCleanupGracePeriod(),
+		MaxRemovals:        defaultStaleDeviceCleanupMaxRemovals(),
+		ProtectedDeviceIDs: defaultProtectedDeviceIDs(),
+		DeleteRecords:      false,
+	})
+	return report.RemovedIDs
+}
+
+func (m *DeviceManager) CleanupStaleDevicesWithOptions(now time.Time, options StaleDeviceCleanupOptions) StaleDeviceCleanupReport {
+	options = normalizeStaleDeviceCleanupOptions(options)
+	report := StaleDeviceCleanupReport{
+		DryRun:        options.DryRun,
+		DeleteRecords: options.DeleteRecords,
+		MaxRemovals:   options.MaxRemovals,
+		GracePeriod:   options.GracePeriod,
 	}
 
-	var removed []string
+	if m == nil {
+		return report
+	}
+
 	m.mu.RLock()
 	candidates := make([]*DeviceInstance, 0, len(m.devices))
 	for _, inst := range m.devices {
@@ -162,24 +207,109 @@ func (m *DeviceManager) CleanupStaleDevices(now time.Time) []string {
 
 	for _, inst := range candidates {
 		if inst == nil {
+			report.SkippedInvalid++
 			continue
 		}
+		report.Scanned++
 		inst.UpdateStateFromClient()
 		state := inst.State()
 		if state == domainDevice.DeviceStateLoggedIn || state == domainDevice.DeviceStateConnected || state == domainDevice.DeviceStateConnecting {
+			report.SkippedActive++
 			continue
 		}
 		if state == domainDevice.DeviceStateLoggedOut {
+			report.SkippedLoggedOut++
 			continue
 		}
-		if now.Sub(inst.LastSeenAt()) < disconnectedGracePeriod {
+		if isProtectedDeviceID(options.ProtectedDeviceIDs, inst) {
+			report.SkippedProtected++
 			continue
 		}
-		m.ForgetDevice(inst.ID(), false)
-		removed = append(removed, inst.ID())
+		if now.Sub(inst.LastSeenAt()) < options.GracePeriod {
+			report.SkippedGrace++
+			continue
+		}
+		report.Candidates++
+		if len(report.RemovedIDs) >= options.MaxRemovals {
+			report.SkippedByCap++
+			continue
+		}
+		if !options.DryRun {
+			m.ForgetDevice(inst.ID(), options.DeleteRecords)
+		}
+		report.RemovedIDs = append(report.RemovedIDs, inst.ID())
+		if !options.DryRun {
+			report.Removed++
+		}
 	}
 
-	return removed
+	return report
+}
+
+func normalizeStaleDeviceCleanupOptions(options StaleDeviceCleanupOptions) StaleDeviceCleanupOptions {
+	if options.GracePeriod <= 0 {
+		options.GracePeriod = defaultStaleDeviceCleanupGracePeriod()
+	}
+	if options.MaxRemovals <= 0 {
+		options.MaxRemovals = defaultStaleDeviceCleanupMaxRemovals()
+	}
+	protected := defaultProtectedDeviceIDs()
+	for id, enabled := range options.ProtectedDeviceIDs {
+		if enabled {
+			addProtectedDeviceID(protected, id)
+		}
+	}
+	options.ProtectedDeviceIDs = protected
+	return options
+}
+
+func defaultStaleDeviceCleanupGracePeriod() time.Duration {
+	if config.RetenaStaleDeviceCleanupGraceMinutes <= 0 {
+		return disconnectedGracePeriod
+	}
+	return time.Duration(config.RetenaStaleDeviceCleanupGraceMinutes) * time.Minute
+}
+
+func defaultStaleDeviceCleanupMaxRemovals() int {
+	if config.RetenaStaleDeviceCleanupMaxPerRun <= 0 {
+		return staleReaperMaxRemovalsPerRun
+	}
+	return config.RetenaStaleDeviceCleanupMaxPerRun
+}
+
+func defaultProtectedDeviceIDs() map[string]bool {
+	protected := make(map[string]bool)
+	addProtectedDeviceID(protected, config.ChatwootDeviceID)
+	for _, id := range config.RetenaProtectedGowaDeviceIDs {
+		addProtectedDeviceID(protected, id)
+	}
+	return protected
+}
+
+func addProtectedDeviceID(protected map[string]bool, id string) {
+	trimmed := strings.TrimSpace(id)
+	if trimmed != "" {
+		protected[trimmed] = true
+	}
+}
+
+func isProtectedDeviceID(protected map[string]bool, inst *DeviceInstance) bool {
+	if inst == nil {
+		return false
+	}
+	if protected[strings.TrimSpace(inst.ID())] {
+		return true
+	}
+	return protected[strings.TrimSpace(inst.JID())]
+}
+
+func redactedDeviceIDs(ids []string) []string {
+	result := make([]string, 0, len(ids))
+	for _, id := range ids {
+		sum := sha256.Sum256([]byte(id))
+		result = append(result, hex.EncodeToString(sum[:])[:12])
+	}
+	return result
 }
 
 // StartStaleDeviceReaper launches a background goroutine that periodically
@@ -196,17 +326,30 @@ func (m *DeviceManager) StartStaleDeviceReaper(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
-				removed := m.CleanupStaleDevices(now)
-				for _, id := range removed {
-					logrus.Infof("[STALE_REAPER] removed stale device %s from registry and persisted records", id)
-					// CleanupStaleDevices already called ForgetDevice(id, false).
-					// Explicitly delete the persisted device_record so it does not
-					// resurface on restart. Chat/message data is NOT touched.
-					if m.storage != nil {
-						if err := m.storage.DeleteDeviceRecord(id); err != nil {
-							logrus.Warnf("[STALE_REAPER] failed to delete device record %s: %v", id, err)
-						}
+				report := m.CleanupStaleDevicesWithOptions(now, StaleDeviceCleanupOptions{
+					GracePeriod:        defaultStaleDeviceCleanupGracePeriod(),
+					MaxRemovals:        defaultStaleDeviceCleanupMaxRemovals(),
+					ProtectedDeviceIDs: defaultProtectedDeviceIDs(),
+					DeleteRecords:      true,
+				})
+				if report.Candidates > 0 || report.Removed > 0 || report.SkippedByCap > 0 {
+					fields := logrus.Fields{
+						"scanned":            report.Scanned,
+						"candidates":         report.Candidates,
+						"removed":            report.Removed,
+						"skipped_active":     report.SkippedActive,
+						"skipped_grace":      report.SkippedGrace,
+						"skipped_logged_out": report.SkippedLoggedOut,
+						"skipped_protected":  report.SkippedProtected,
+						"skipped_by_cap":     report.SkippedByCap,
+						"max_removals":       report.MaxRemovals,
+						"grace_seconds":      int(report.GracePeriod.Seconds()),
+						"delete_records":     report.DeleteRecords,
 					}
+					if len(report.RemovedIDs) > 0 {
+						fields["removed_hashes"] = redactedDeviceIDs(report.RemovedIDs)
+					}
+					logrus.WithFields(fields).Info("[STALE_REAPER] cleanup completed")
 				}
 			}
 		}
