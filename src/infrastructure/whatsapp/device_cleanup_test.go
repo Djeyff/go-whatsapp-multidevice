@@ -71,6 +71,45 @@ func TestCleanupStaleDevicesKeepsProtectedDevice(t *testing.T) {
 	}
 }
 
+func TestCleanupStaleDevicesUsesCreatedAtForDisconnectedPlaceholder(t *testing.T) {
+	now := time.Now()
+	manager := &DeviceManager{devices: make(map[string]*DeviceInstance)}
+	instance := NewDeviceInstance("old-placeholder", nil, nil)
+	instance.state = domainDevice.DeviceStateDisconnected
+	instance.createdAt = now.Add(-2 * time.Hour)
+	instance.lastSeenAt = now.Add(-5 * time.Minute)
+	manager.devices[instance.ID()] = instance
+
+	report := manager.CleanupStaleDevicesWithOptions(now, StaleDeviceCleanupOptions{
+		GracePeriod: 30 * time.Minute,
+		MaxRemovals: 10,
+	})
+
+	if report.Removed != 1 {
+		t.Fatalf("expected old disconnected placeholder to be removed by created_at age, got report %+v", report)
+	}
+}
+
+func TestCleanupStaleDevicesUsesLastSeenForDisconnectedDeviceWithJID(t *testing.T) {
+	now := time.Now()
+	manager := &DeviceManager{devices: make(map[string]*DeviceInstance)}
+	instance := NewDeviceInstance("recent-device", nil, nil)
+	instance.state = domainDevice.DeviceStateDisconnected
+	instance.jid = "18095550123@s.whatsapp.net"
+	instance.createdAt = now.Add(-2 * time.Hour)
+	instance.lastSeenAt = now.Add(-5 * time.Minute)
+	manager.devices[instance.ID()] = instance
+
+	report := manager.CleanupStaleDevicesWithOptions(now, StaleDeviceCleanupOptions{
+		GracePeriod: 30 * time.Minute,
+		MaxRemovals: 10,
+	})
+
+	if report.Removed != 0 || report.SkippedGrace != 1 {
+		t.Fatalf("expected JID-backed device to honor lastSeenAt grace, got report %+v", report)
+	}
+}
+
 func TestCleanupStaleDevicesDryRunAndCap(t *testing.T) {
 	now := time.Now()
 	manager := &DeviceManager{devices: make(map[string]*DeviceInstance)}

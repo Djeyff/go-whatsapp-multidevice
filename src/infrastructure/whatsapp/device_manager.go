@@ -225,7 +225,7 @@ func (m *DeviceManager) CleanupStaleDevicesWithOptions(now time.Time, options St
 			report.SkippedProtected++
 			continue
 		}
-		if now.Sub(inst.LastSeenAt()) < options.GracePeriod {
+		if now.Sub(staleDeviceCleanupAgeAnchor(inst)) < options.GracePeriod {
 			report.SkippedGrace++
 			continue
 		}
@@ -301,6 +301,21 @@ func isProtectedDeviceID(protected map[string]bool, inst *DeviceInstance) bool {
 		return true
 	}
 	return protected[strings.TrimSpace(inst.JID())]
+}
+
+func staleDeviceCleanupAgeAnchor(inst *DeviceInstance) time.Time {
+	if inst == nil {
+		return time.Now()
+	}
+	anchor := inst.LastSeenAt()
+	if strings.TrimSpace(inst.JID()) != "" {
+		return anchor
+	}
+	createdAt := inst.CreatedAt()
+	if !createdAt.IsZero() && (anchor.IsZero() || createdAt.Before(anchor)) {
+		return createdAt
+	}
+	return anchor
 }
 
 func redactedDeviceIDs(ids []string) []string {
