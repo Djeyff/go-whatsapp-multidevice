@@ -39,13 +39,21 @@ func StreamMedia(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"code": "NOT_FOUND", "message": fmt.Sprintf("message %s not found", messageID)})
 	}
 
-	if msg.URL == "" || len(msg.MediaKey) == 0 {
+	if (msg.URL == "" && msg.DirectPath == "") || len(msg.MediaKey) == 0 {
 		return c.Status(400).JSON(fiber.Map{"code": "NO_MEDIA", "message": "message has no downloadable media"})
+	}
+
+	downloadURL := msg.URL
+	if msg.DirectPath != "" {
+		// WhatsApp CDN URLs can expire. Prefer direct_path when preserved so whatsmeow
+		// can refresh media hosts instead of replaying a stale URL.
+		downloadURL = ""
 	}
 
 	// Build AudioMessage for whatsmeow Download (works for voice notes / ptt)
 	downloadable := &waE2E.AudioMessage{
-		URL:           proto.String(msg.URL),
+		URL:           proto.String(downloadURL),
+		DirectPath:    proto.String(msg.DirectPath),
 		MediaKey:      msg.MediaKey,
 		FileEncSHA256: msg.FileEncSHA256,
 		FileSHA256:    msg.FileSHA256,
