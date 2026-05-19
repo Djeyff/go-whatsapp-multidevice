@@ -41,3 +41,19 @@ func TestChatwootAttachmentURLAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactChatwootIdentifier(t *testing.T) {
+	cases := map[string]string{
+		"":                              "",
+		"123":                           "***",
+		"+18092044903":                  "***4903",
+		"584160334076@c.us":             "***4076",
+		"120363123456789012@g.us":       "***9012",
+		"  8295551212@s.whatsapp.net  ": "***1212",
+	}
+	for input, expected := range cases {
+		if got := redactChatwootIdentifier(input); got != expected {
+			t.Fatalf("redactChatwootIdentifier(%q) = %q, want %q", input, got, expected)
+		}
+	}
+}

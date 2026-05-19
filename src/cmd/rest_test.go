@@ -128,4 +128,13 @@ func TestChatwootWebhookGateRequiresDedicatedSecret(t *testing.T) {
 	if resp.StatusCode != fiber.StatusNoContent {
 		t.Fatalf("bearer secret status = %d, want %d", resp.StatusCode, fiber.StatusNoContent)
 	}
+
+	req = httptest.NewRequest(http.MethodPost, "/chatwoot/webhook?token=top-secret", strings.NewReader(`{}`))
+	resp, err = app.Test(req)
+	if err != nil {
+		t.Fatalf("query secret request failed: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("query secret status = %d, want %d", resp.StatusCode, fiber.StatusUnauthorized)
+	}
 }

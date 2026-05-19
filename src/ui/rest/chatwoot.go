@@ -40,7 +40,7 @@ func NewChatwootHandler(
 }
 
 func (h *ChatwootHandler) HandleWebhook(c *fiber.Ctx) error {
-	logrus.Debugf("Chatwoot Webhook raw body: %s", string(c.Body()))
+	logrus.Debugf("Chatwoot Webhook body received bytes=%d", len(c.Body()))
 
 	// Resolve device for outbound messages
 	instance, resolvedID, err := h.DeviceManager.ResolveDevice(config.ChatwootDeviceID)
@@ -64,7 +64,7 @@ func (h *ChatwootHandler) HandleWebhook(c *fiber.Ctx) error {
 
 	contact := payload.Conversation.Meta.Sender
 	logrus.Debugf("Chatwoot Webhook: event=%s message_type=%s contact_id=%d contact_phone=%s",
-		payload.Event, payload.MessageType, contact.ID, contact.PhoneNumber)
+		payload.Event, payload.MessageType, contact.ID, redactChatwootIdentifier(contact.PhoneNumber))
 
 	if payload.Event != "message_created" {
 		return c.SendStatus(fiber.StatusOK)
@@ -111,7 +111,7 @@ func (h *ChatwootHandler) HandleWebhook(c *fiber.Ctx) error {
 		destination = utils.ExtractPhoneFromJID(destination)
 	}
 
-	logrus.Debugf("Chatwoot Webhook: Sending to destination=%s isGroup=%v", destination, isGroup)
+	logrus.Debugf("Chatwoot Webhook: Sending to destination=%s isGroup=%v", redactChatwootIdentifier(destination), isGroup)
 
 	// Handle attachments if present
 	if len(payload.Attachments) > 0 {
@@ -135,16 +135,31 @@ func (h *ChatwootHandler) HandleWebhook(c *fiber.Ctx) error {
 		if err != nil {
 			// Log with more context but still return 200 to prevent Chatwoot retries
 			logrus.WithFields(logrus.Fields{
-				"destination": destination,
+				"destination": redactChatwootIdentifier(destination),
 				"is_group":    isGroup,
 				"error":       err.Error(),
 			}).Error("Chatwoot Webhook: Failed to send message (returning 200 to prevent retry)")
 			return c.SendStatus(fiber.StatusOK)
 		}
-		logrus.Infof("Chatwoot Webhook: Sent text message to %s", destination)
+		logrus.Infof("Chatwoot Webhook: Sent text message to %s", redactChatwootIdentifier(destination))
 	}
 
 	return c.SendStatus(fiber.StatusOK)
+}
+
+func redactChatwootIdentifier(value string) string {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return ""
+	}
+	suffix := raw
+	if at := strings.Index(suffix, "@"); at >= 0 {
+		suffix = suffix[:at]
+	}
+	if len(suffix) <= 4 {
+		return "***"
+	}
+	return fmt.Sprintf("***%s", suffix[len(suffix)-4:])
 }
 
 func (h *ChatwootHandler) handleAttachment(c *fiber.Ctx, phone string, att chatwoot.Attachment, caption string) error {
@@ -161,7 +176,7 @@ func (h *ChatwootHandler) handleAttachment(c *fiber.Ctx, phone string, att chatw
 		}
 		_, err := h.SendUsecase.SendImage(c.Context(), req)
 		if err == nil {
-			logrus.Infof("Chatwoot Webhook: Sent image attachment to %s", phone)
+			logrus.Infof("Chatwoot Webhook: Sent image attachment to %s", redactChatwootIdentifier(phone))
 		}
 		return err
 
@@ -173,7 +188,7 @@ func (h *ChatwootHandler) handleAttachment(c *fiber.Ctx, phone string, att chatw
 		}
 		_, err := h.SendUsecase.SendAudio(c.Context(), req)
 		if err == nil {
-			logrus.Infof("Chatwoot Webhook: Sent audio attachment to %s", phone)
+			logrus.Infof("Chatwoot Webhook: Sent audio attachment to %s", redactChatwootIdentifier(phone))
 			return nil
 		}
 
@@ -186,7 +201,7 @@ func (h *ChatwootHandler) handleAttachment(c *fiber.Ctx, phone string, att chatw
 		}
 		_, err = h.SendUsecase.SendFile(c.Context(), reqFile)
 		if err == nil {
-			logrus.Infof("Chatwoot Webhook: Sent audio as file attachment to %s", phone)
+			logrus.Infof("Chatwoot Webhook: Sent audio as file attachment to %s", redactChatwootIdentifier(phone))
 		}
 		return err
 
@@ -198,7 +213,7 @@ func (h *ChatwootHandler) handleAttachment(c *fiber.Ctx, phone string, att chatw
 		}
 		_, err := h.SendUsecase.SendVideo(c.Context(), req)
 		if err == nil {
-			logrus.Infof("Chatwoot Webhook: Sent video attachment to %s", phone)
+			logrus.Infof("Chatwoot Webhook: Sent video attachment to %s", redactChatwootIdentifier(phone))
 		}
 		return err
 
@@ -211,7 +226,7 @@ func (h *ChatwootHandler) handleAttachment(c *fiber.Ctx, phone string, att chatw
 		}
 		_, err := h.SendUsecase.SendFile(c.Context(), req)
 		if err == nil {
-			logrus.Infof("Chatwoot Webhook: Sent file attachment to %s", phone)
+			logrus.Infof("Chatwoot Webhook: Sent file attachment to %s", redactChatwootIdentifier(phone))
 		}
 		return err
 	}

@@ -105,10 +105,6 @@ func chatwootWebhookSecretCandidates(c *fiber.Ctx) []string {
 	if len(auth) > 7 && strings.EqualFold(auth[:7], "Bearer ") {
 		candidates = append(candidates, strings.TrimSpace(auth[7:]))
 	}
-
-	// Kept only for systems that cannot send custom headers. Headers are preferred
-	// because query strings can be stored in access logs.
-	candidates = append(candidates, c.Query("secret"), c.Query("token"))
 	return candidates
 }
 
