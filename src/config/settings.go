@@ -56,12 +56,13 @@ var (
 	ChatStorageEnableForeignKeys = true
 	ChatStorageEnableWAL         = true
 
-	ChatwootEnabled   = false
-	ChatwootURL       = ""
-	ChatwootAPIToken  = ""
-	ChatwootAccountID = 0
-	ChatwootInboxID   = 0
-	ChatwootDeviceID  = "" // Device ID for outbound messages (required for multi-device)
+	ChatwootEnabled       = false
+	ChatwootURL           = ""
+	ChatwootAPIToken      = ""
+	ChatwootAccountID     = 0
+	ChatwootInboxID       = 0
+	ChatwootDeviceID      = "" // Device ID for outbound messages (required for multi-device)
+	ChatwootWebhookSecret = "" // Dedicated inbound webhook secret for Chatwoot -> GOWA sends
 
 	// Chatwoot History Sync settings
 	ChatwootImportMessages          = false // Enable message history import to Chatwoot

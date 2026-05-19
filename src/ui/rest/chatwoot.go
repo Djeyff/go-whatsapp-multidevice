@@ -3,6 +3,9 @@ package rest
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
+	"strings"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	domainApp "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/app"
@@ -145,6 +148,10 @@ func (h *ChatwootHandler) HandleWebhook(c *fiber.Ctx) error {
 }
 
 func (h *ChatwootHandler) handleAttachment(c *fiber.Ctx, phone string, att chatwoot.Attachment, caption string) error {
+	if !chatwootAttachmentURLAllowed(att.DataURL) {
+		return fmt.Errorf("blocked unsafe Chatwoot attachment URL")
+	}
+
 	switch att.FileType {
 	case "image":
 		req := domainSend.ImageRequest{
@@ -208,6 +215,36 @@ func (h *ChatwootHandler) handleAttachment(c *fiber.Ctx, phone string, att chatw
 		}
 		return err
 	}
+}
+
+func chatwootAttachmentURLAllowed(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil {
+		return false
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return false
+	}
+
+	hostname := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if hostname == "" || hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") || strings.HasSuffix(hostname, ".local") {
+		return false
+	}
+	if ip := net.ParseIP(hostname); ip != nil {
+		if ip.IsLoopback() ||
+			ip.IsPrivate() ||
+			ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() ||
+			ip.IsUnspecified() {
+			return false
+		}
+	}
+
+	chatwootBase, err := url.Parse(strings.TrimSpace(config.ChatwootURL))
+	if err != nil || chatwootBase == nil || chatwootBase.Hostname() == "" {
+		return false
+	}
+	return strings.EqualFold(hostname, chatwootBase.Hostname())
 }
 
 // SyncHistory triggers a message history sync to Chatwoot

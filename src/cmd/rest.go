@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -93,6 +94,60 @@ func passiveListenerGuard(c *fiber.Ctx) error {
 	})
 }
 
+func chatwootWebhookSecretCandidates(c *fiber.Ctx) []string {
+	candidates := []string{
+		c.Get("X-Chatwoot-Webhook-Secret"),
+		c.Get("X-Retena-Webhook-Secret"),
+		c.Get("X-Api-Secret"),
+	}
+
+	auth := strings.TrimSpace(c.Get(fiber.HeaderAuthorization))
+	if len(auth) > 7 && strings.EqualFold(auth[:7], "Bearer ") {
+		candidates = append(candidates, strings.TrimSpace(auth[7:]))
+	}
+
+	// Kept only for systems that cannot send custom headers. Headers are preferred
+	// because query strings can be stored in access logs.
+	candidates = append(candidates, c.Query("secret"), c.Query("token"))
+	return candidates
+}
+
+func chatwootWebhookAuthorized(c *fiber.Ctx) bool {
+	secret := strings.TrimSpace(config.ChatwootWebhookSecret)
+	if secret == "" {
+		return false
+	}
+	for _, candidate := range chatwootWebhookSecretCandidates(c) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || len(candidate) != len(secret) {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(candidate), []byte(secret)) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func chatwootWebhookGate(handler fiber.Handler) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if strings.TrimSpace(config.ChatwootWebhookSecret) == "" {
+			logrus.Warn("Chatwoot webhook rejected: CHATWOOT_WEBHOOK_SECRET is required when Chatwoot is enabled")
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"code":    "CHATWOOT_WEBHOOK_SECRET_REQUIRED",
+				"message": "Chatwoot webhook secret is required",
+			})
+		}
+		if !chatwootWebhookAuthorized(c) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"code":    "CHATWOOT_WEBHOOK_UNAUTHORIZED",
+				"message": "Unauthorized Chatwoot webhook",
+			})
+		}
+		return handler(c)
+	}
+}
+
 func restServer(_ *cobra.Command, _ []string) {
 	engine := html.NewFileSystem(http.FS(EmbedIndex), ".html")
 	engine.AddFunc("isEnableBasicAuth", func(token any) bool {
@@ -167,15 +222,15 @@ func restServer(_ *cobra.Command, _ []string) {
 		})
 	})
 
-	// Chatwoot webhook - registered BEFORE basic auth middleware
-	// This allows Chatwoot to send webhooks without authentication
+	// Chatwoot webhook - registered before optional app basic auth, but guarded
+	// by a dedicated shared secret so it cannot be used as a public send proxy.
 	if config.ChatwootEnabled {
 		chatwootHandler := rest.NewChatwootHandler(appUsecase, sendUsecase, dm, chatStorageRepo)
 		webhookPath := "/chatwoot/webhook"
 		if config.AppBasePath != "" {
 			webhookPath = config.AppBasePath + webhookPath
 		}
-		app.Post(webhookPath, chatwootHandler.HandleWebhook)
+		app.Post(webhookPath, chatwootWebhookGate(chatwootHandler.HandleWebhook))
 	}
 
 	if len(config.AppBasicAuthCredential) > 0 {

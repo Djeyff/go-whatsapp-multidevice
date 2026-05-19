@@ -225,6 +225,9 @@ func initEnvConfig() {
 	if envChatwootDeviceID := viper.GetString("chatwoot_device_id"); envChatwootDeviceID != "" {
 		config.ChatwootDeviceID = envChatwootDeviceID
 	}
+	if envChatwootWebhookSecret := viper.GetString("chatwoot_webhook_secret"); envChatwootWebhookSecret != "" {
+		config.ChatwootWebhookSecret = envChatwootWebhookSecret
+	}
 	// Chatwoot History Sync settings
 	if viper.IsSet("chatwoot_import_messages") {
 		config.ChatwootImportMessages = viper.GetBool("chatwoot_import_messages")
@@ -387,6 +390,12 @@ func initFlags() {
 		"chatwoot-device-id", "",
 		config.ChatwootDeviceID,
 		`device ID for Chatwoot outbound messages --chatwoot-device-id <string> | example: --chatwoot-device-id="my-device"`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.ChatwootWebhookSecret,
+		"chatwoot-webhook-secret", "",
+		config.ChatwootWebhookSecret,
+		`dedicated inbound secret for Chatwoot webhooks --chatwoot-webhook-secret <string> | example: --chatwoot-webhook-secret="super-secret-key"`,
 	)
 	rootCmd.PersistentFlags().BoolVarP(
 		&config.ChatwootImportMessages,
