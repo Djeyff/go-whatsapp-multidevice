@@ -3974,9 +3974,30 @@ components:
         jid:
           type: string
           example: "628123123123123@s.whatsapp.net"
+        phone:
+          type: string
+          example: "628123123123123"
         name:
           type: string
           example: "Aldino Kemal"
+        display_name:
+          type: string
+          example: "Aldino Kemal"
+        first_name:
+          type: string
+          example: "Aldino"
+        full_name:
+          type: string
+          example: "Aldino Kemal"
+        push_name:
+          type: string
+          example: "Aldino"
+        business_name:
+          type: string
+          example: "Aldino Studio"
+        has_saved_name:
+          type: boolean
+          example: true
 
 
     GroupParticipantRequestItem:

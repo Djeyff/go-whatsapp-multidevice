@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"strings"
 	"time"
 
-	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
@@ -272,13 +273,35 @@ func (service serviceUser) MyListContacts(ctx context.Context) (response domainU
 	}
 
 	for jid, contact := range contacts {
-		response.Data = append(response.Data, domainUser.MyListContactsResponseData{
-			JID:  jid,
-			Name: contact.FullName,
-		})
+		response.Data = append(response.Data, myListContactResponseData(jid, contact))
 	}
 
 	return response, nil
+}
+
+func cleanMyContactName(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func myListContactResponseData(jid types.JID, contact types.ContactInfo) domainUser.MyListContactsResponseData {
+	firstName := cleanMyContactName(contact.FirstName)
+	fullName := cleanMyContactName(contact.FullName)
+	displayName := fullName
+	if displayName == "" {
+		displayName = firstName
+	}
+
+	return domainUser.MyListContactsResponseData{
+		JID:          jid,
+		Phone:        jid.User,
+		Name:         displayName,
+		DisplayName:  displayName,
+		FirstName:    firstName,
+		FullName:     fullName,
+		PushName:     cleanMyContactName(contact.PushName),
+		BusinessName: cleanMyContactName(contact.BusinessName),
+		HasSavedName: displayName != "",
+	}
 }
 
 func (service serviceUser) ChangeAvatar(ctx context.Context, request domainUser.ChangeAvatarRequest) (err error) {
