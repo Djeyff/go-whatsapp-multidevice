@@ -753,6 +753,7 @@ type EvtMessage struct {
 	ID            string `json:"id"`
 	RepliedId     string `json:"replied_id"`
 	QuotedMessage string `json:"quoted_message"`
+	QuotedSender  string `json:"quoted_sender"`
 }
 
 type EvtReaction struct {
@@ -832,6 +833,78 @@ func UnwrapMessage(msg *waE2E.Message) *waE2E.Message {
 	return inner
 }
 
+type QuotedReplyInfo struct {
+	RepliedToID  string
+	QuotedBody   string
+	QuotedSender string
+}
+
+func quotedReplyInfoFromContext(ctx *waE2E.ContextInfo) QuotedReplyInfo {
+	if ctx == nil {
+		return QuotedReplyInfo{}
+	}
+	info := QuotedReplyInfo{
+		RepliedToID:  ctx.GetStanzaID(),
+		QuotedSender: ctx.GetParticipant(),
+	}
+	if quoted := ctx.GetQuotedMessage(); quoted != nil {
+		info.QuotedBody = ExtractMessageTextFromProto(UnwrapMessage(quoted))
+	}
+	if info.RepliedToID == "" && info.QuotedBody == "" && info.QuotedSender == "" {
+		return QuotedReplyInfo{}
+	}
+	return info
+}
+
+func firstQuotedReplyInfo(contexts ...*waE2E.ContextInfo) QuotedReplyInfo {
+	for _, ctx := range contexts {
+		info := quotedReplyInfoFromContext(ctx)
+		if info.RepliedToID != "" || info.QuotedBody != "" || info.QuotedSender != "" {
+			return info
+		}
+	}
+	return QuotedReplyInfo{}
+}
+
+func BuildQuotedReplyInfoFromMessage(message *waE2E.Message) QuotedReplyInfo {
+	msg := UnwrapMessage(message)
+	if msg == nil {
+		return QuotedReplyInfo{}
+	}
+
+	contexts := make([]*waE2E.ContextInfo, 0, 6)
+
+	if extendedMessage := msg.GetExtendedTextMessage(); extendedMessage != nil {
+		contexts = append(contexts, extendedMessage.GetContextInfo())
+	}
+	if image := msg.GetImageMessage(); image != nil {
+		contexts = append(contexts, image.GetContextInfo())
+	}
+	if video := msg.GetVideoMessage(); video != nil {
+		contexts = append(contexts, video.GetContextInfo())
+	}
+	if audio := msg.GetAudioMessage(); audio != nil {
+		contexts = append(contexts, audio.GetContextInfo())
+	}
+	if document := msg.GetDocumentMessage(); document != nil {
+		contexts = append(contexts, document.GetContextInfo())
+	}
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		contexts = append(contexts, sticker.GetContextInfo())
+	}
+
+	if info := firstQuotedReplyInfo(contexts...); info.RepliedToID != "" || info.QuotedBody != "" || info.QuotedSender != "" {
+		return info
+	}
+
+	if protocolMessage := msg.GetProtocolMessage(); protocolMessage != nil {
+		if editedMessage := protocolMessage.GetEditedMessage(); editedMessage != nil {
+			return BuildQuotedReplyInfoFromMessage(editedMessage)
+		}
+	}
+	return QuotedReplyInfo{}
+}
+
 // BuildEventMessage builds event message structure
 func BuildEventMessage(evt *events.Message) (message EvtMessage) {
 	msg := UnwrapMessage(evt.Message)
@@ -841,17 +914,18 @@ func BuildEventMessage(evt *events.Message) (message EvtMessage) {
 
 	if extendedMessage := msg.GetExtendedTextMessage(); extendedMessage != nil {
 		message.Text = extendedMessage.GetText()
-		message.RepliedId = extendedMessage.ContextInfo.GetStanzaID()
-		message.QuotedMessage = extendedMessage.ContextInfo.GetQuotedMessage().GetConversation()
 	} else if protocolMessage := msg.GetProtocolMessage(); protocolMessage != nil {
 		if editedMessage := protocolMessage.GetEditedMessage(); editedMessage != nil {
 			if extendedText := editedMessage.GetExtendedTextMessage(); extendedText != nil {
 				message.Text = extendedText.GetText()
-				message.RepliedId = extendedText.ContextInfo.GetStanzaID()
-				message.QuotedMessage = extendedText.ContextInfo.GetQuotedMessage().GetConversation()
 			}
 		}
 	}
+
+	replyInfo := BuildQuotedReplyInfoFromMessage(msg)
+	message.RepliedId = replyInfo.RepliedToID
+	message.QuotedMessage = replyInfo.QuotedBody
+	message.QuotedSender = replyInfo.QuotedSender
 
 	return message
 }

@@ -62,6 +62,46 @@ func TestStoreMessagePersistsForwardedMetadata(t *testing.T) {
 	}
 }
 
+func TestStoreMessagePersistsQuotedReplyMetadata(t *testing.T) {
+	repo := newForwardedMetadataTestRepo(t)
+
+	err := repo.StoreMessage(&domainChatStorage.Message{
+		ID:           "reply-message",
+		ChatJID:      "18295728623@s.whatsapp.net",
+		DeviceID:     "18090000000@s.whatsapp.net",
+		Sender:       "18295728623@s.whatsapp.net",
+		Content:      "Ok me avisa",
+		Timestamp:    time.Unix(1780000100, 0),
+		RepliedToID:  "ORIGINAL123",
+		QuotedBody:   "Ahora con el depósito, hay para el seguro.",
+		QuotedSender: "18090000000@s.whatsapp.net",
+	})
+	if err != nil {
+		t.Fatalf("store message: %v", err)
+	}
+
+	messages, err := repo.GetMessages(&domainChatStorage.MessageFilter{
+		DeviceID: "18090000000@s.whatsapp.net",
+		ChatJID:  "18295728623@s.whatsapp.net",
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	if messages[0].RepliedToID != "ORIGINAL123" {
+		t.Fatalf("expected replied_to_id to round trip, got %q", messages[0].RepliedToID)
+	}
+	if messages[0].QuotedBody != "Ahora con el depósito, hay para el seguro." {
+		t.Fatalf("expected quoted body to round trip, got %q", messages[0].QuotedBody)
+	}
+	if messages[0].QuotedSender != "18090000000@s.whatsapp.net" {
+		t.Fatalf("expected quoted sender to round trip, got %q", messages[0].QuotedSender)
+	}
+}
+
 func TestStoreMessagesBatchUpdatesForwardedMetadata(t *testing.T) {
 	repo := newForwardedMetadataTestRepo(t)
 

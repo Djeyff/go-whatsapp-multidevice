@@ -25,6 +25,9 @@ type Message struct {
 	IsFromMe        bool      `db:"is_from_me"`
 	IsForwarded     bool      `db:"is_forwarded"`
 	ForwardingScore int       `db:"forwarding_score"`
+	RepliedToID     string    `db:"replied_to_id"`
+	QuotedBody      string    `db:"quoted_body"`
+	QuotedSender    string    `db:"quoted_sender"`
 	MediaType       string    `db:"media_type"`
 	CallMetadata    string    `db:"call_metadata"` // JSON metadata when media_type is "call"
 	Filename        string    `db:"filename"`

@@ -65,6 +65,9 @@ type MessageInfo struct {
 	Forwarded       bool   `json:"forwarded,omitempty"`
 	IsForwarded     bool   `json:"is_forwarded,omitempty"`
 	ForwardingScore int    `json:"forwarding_score,omitempty"`
+	RepliedToID     string `json:"replied_to_id,omitempty"`
+	QuotedBody      string `json:"quoted_body,omitempty"`
+	QuotedSender    string `json:"quoted_sender,omitempty"`
 	MediaType       string `json:"media_type"`
 	// CallMetadata is JSON when media_type is "call" (incoming call log).
 	CallMetadata string `json:"call_metadata,omitempty"`

@@ -88,7 +88,8 @@ func (r *SQLiteRepository) GetChatByDevice(deviceID, jid string) (*domainChatSto
 func (r *SQLiteRepository) GetMessageByID(id string) (*domainChatStorage.Message, error) {
 	query := `
 		SELECT id, chat_jid, device_id, sender, content, timestamp, is_from_me,
-			is_forwarded, forwarding_score, media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
+			is_forwarded, forwarding_score, replied_to_id, quoted_body, quoted_sender,
+			media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
 			file_enc_sha256, file_length, created_at, updated_at
 		FROM messages
 		WHERE id = ?
@@ -241,11 +242,13 @@ func (r *SQLiteRepository) StoreMessage(message *domainChatStorage.Message) erro
 	// Try update first, then insert if no rows affected (cross-db compatible)
 	result, err := r.db.Exec(`
 		UPDATE messages SET sender = ?, content = ?, timestamp = ?, is_from_me = ?,
-			is_forwarded = ?, forwarding_score = ?, media_type = ?, call_metadata = ?, filename = ?, url = ?, direct_path = ?, media_key = ?, file_sha256 = ?,
+			is_forwarded = ?, forwarding_score = ?, replied_to_id = ?, quoted_body = ?, quoted_sender = ?,
+			media_type = ?, call_metadata = ?, filename = ?, url = ?, direct_path = ?, media_key = ?, file_sha256 = ?,
 			file_enc_sha256 = ?, file_length = ?, updated_at = ?
 		WHERE id = ? AND chat_jid = ? AND device_id = ?
 	`, message.Sender, message.Content, message.Timestamp, message.IsFromMe,
-		message.IsForwarded, message.ForwardingScore, message.MediaType, message.CallMetadata, message.Filename, message.URL, message.DirectPath, message.MediaKey, message.FileSHA256,
+		message.IsForwarded, message.ForwardingScore, message.RepliedToID, message.QuotedBody, message.QuotedSender,
+		message.MediaType, message.CallMetadata, message.Filename, message.URL, message.DirectPath, message.MediaKey, message.FileSHA256,
 		message.FileEncSHA256, message.FileLength, message.UpdatedAt,
 		message.ID, message.ChatJID, message.DeviceID)
 	if err != nil {
@@ -257,11 +260,13 @@ func (r *SQLiteRepository) StoreMessage(message *domainChatStorage.Message) erro
 		_, err = r.db.Exec(`
 			INSERT INTO messages (
 				id, chat_jid, device_id, sender, content, timestamp, is_from_me,
-				is_forwarded, forwarding_score, media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
+				is_forwarded, forwarding_score, replied_to_id, quoted_body, quoted_sender,
+				media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
 				file_enc_sha256, file_length, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, message.ID, message.ChatJID, message.DeviceID, message.Sender, message.Content,
-			message.Timestamp, message.IsFromMe, message.IsForwarded, message.ForwardingScore, message.MediaType, message.CallMetadata, message.Filename,
+			message.Timestamp, message.IsFromMe, message.IsForwarded, message.ForwardingScore, message.RepliedToID, message.QuotedBody, message.QuotedSender,
+			message.MediaType, message.CallMetadata, message.Filename,
 			message.URL, message.DirectPath, message.MediaKey, message.FileSHA256, message.FileEncSHA256,
 			message.FileLength, message.CreatedAt, message.UpdatedAt)
 	}
@@ -283,7 +288,8 @@ func (r *SQLiteRepository) StoreMessagesBatch(messages []*domainChatStorage.Mess
 	// Prepare statements for update and insert
 	updateStmt, err := tx.Prepare(`
 		UPDATE messages SET sender = ?, content = ?, timestamp = ?, is_from_me = ?,
-			is_forwarded = ?, forwarding_score = ?, media_type = ?, call_metadata = ?, filename = ?, url = ?, direct_path = ?, media_key = ?, file_sha256 = ?,
+			is_forwarded = ?, forwarding_score = ?, replied_to_id = ?, quoted_body = ?, quoted_sender = ?,
+			media_type = ?, call_metadata = ?, filename = ?, url = ?, direct_path = ?, media_key = ?, file_sha256 = ?,
 			file_enc_sha256 = ?, file_length = ?, updated_at = ?
 		WHERE id = ? AND chat_jid = ? AND device_id = ?
 	`)
@@ -295,9 +301,10 @@ func (r *SQLiteRepository) StoreMessagesBatch(messages []*domainChatStorage.Mess
 	insertStmt, err := tx.Prepare(`
 		INSERT INTO messages (
 			id, chat_jid, device_id, sender, content, timestamp, is_from_me,
-			is_forwarded, forwarding_score, media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
+			is_forwarded, forwarding_score, replied_to_id, quoted_body, quoted_sender,
+			media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
 			file_enc_sha256, file_length, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert statement: %w", err)
@@ -315,7 +322,8 @@ func (r *SQLiteRepository) StoreMessagesBatch(messages []*domainChatStorage.Mess
 
 		result, err := updateStmt.Exec(
 			message.Sender, message.Content, message.Timestamp, message.IsFromMe,
-			message.IsForwarded, message.ForwardingScore, message.MediaType, message.CallMetadata, message.Filename, message.URL, message.DirectPath, message.MediaKey, message.FileSHA256,
+			message.IsForwarded, message.ForwardingScore, message.RepliedToID, message.QuotedBody, message.QuotedSender,
+			message.MediaType, message.CallMetadata, message.Filename, message.URL, message.DirectPath, message.MediaKey, message.FileSHA256,
 			message.FileEncSHA256, message.FileLength, message.UpdatedAt,
 			message.ID, message.ChatJID, message.DeviceID,
 		)
@@ -327,7 +335,8 @@ func (r *SQLiteRepository) StoreMessagesBatch(messages []*domainChatStorage.Mess
 		if rowsAffected == 0 {
 			_, err = insertStmt.Exec(
 				message.ID, message.ChatJID, message.DeviceID, message.Sender, message.Content,
-				message.Timestamp, message.IsFromMe, message.IsForwarded, message.ForwardingScore, message.MediaType, message.CallMetadata, message.Filename,
+				message.Timestamp, message.IsFromMe, message.IsForwarded, message.ForwardingScore, message.RepliedToID, message.QuotedBody, message.QuotedSender,
+				message.MediaType, message.CallMetadata, message.Filename,
 				message.URL, message.DirectPath, message.MediaKey, message.FileSHA256, message.FileEncSHA256,
 				message.FileLength, message.CreatedAt, message.UpdatedAt,
 			)
@@ -378,7 +387,8 @@ func (r *SQLiteRepository) GetMessages(filter *domainChatStorage.MessageFilter) 
 
 	query := `
 		SELECT id, chat_jid, device_id, sender, content, timestamp, is_from_me,
-			is_forwarded, forwarding_score, media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
+			is_forwarded, forwarding_score, replied_to_id, quoted_body, quoted_sender,
+			media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
 			file_enc_sha256, file_length, created_at, updated_at
 		FROM messages
 		WHERE ` + strings.Join(conditions, " AND ") + `
@@ -443,7 +453,8 @@ func (r *SQLiteRepository) SearchMessages(deviceID, chatJID, searchText string, 
 
 	query := `
 		SELECT id, chat_jid, device_id, sender, content, timestamp, is_from_me,
-			is_forwarded, forwarding_score, media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
+			is_forwarded, forwarding_score, replied_to_id, quoted_body, quoted_sender,
+			media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
 			file_enc_sha256, file_length, created_at, updated_at
 		FROM messages
 		WHERE ` + strings.Join(conditions, " AND ") + `
@@ -505,7 +516,9 @@ func (r *SQLiteRepository) scanMessage(scanner interface{ Scan(...any) error }) 
 	message := &domainChatStorage.Message{}
 	err := scanner.Scan(
 		&message.ID, &message.ChatJID, &message.DeviceID, &message.Sender, &message.Content,
-		&message.Timestamp, &message.IsFromMe, &message.IsForwarded, &message.ForwardingScore, &message.MediaType, &message.CallMetadata, &message.Filename,
+		&message.Timestamp, &message.IsFromMe, &message.IsForwarded, &message.ForwardingScore,
+		&message.RepliedToID, &message.QuotedBody, &message.QuotedSender,
+		&message.MediaType, &message.CallMetadata, &message.Filename,
 		&message.URL, &message.DirectPath, &message.MediaKey, &message.FileSHA256, &message.FileEncSHA256,
 		&message.FileLength, &message.CreatedAt, &message.UpdatedAt,
 	)
@@ -840,6 +853,7 @@ func (r *SQLiteRepository) CreateMessage(ctx context.Context, evt *events.Messag
 	content := utils.ExtractMessageTextFromProto(evt.Message)
 	mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength := utils.ExtractMediaInfo(evt.Message)
 	forwardedInfo := utils.BuildForwardedInfo(evt)
+	replyInfo := utils.BuildQuotedReplyInfoFromMessage(evt.Message)
 
 	// Skip if there's no content and no media
 	if content == "" && mediaType == "" {
@@ -858,6 +872,9 @@ func (r *SQLiteRepository) CreateMessage(ctx context.Context, evt *events.Messag
 		IsFromMe:        evt.Info.IsFromMe,
 		IsForwarded:     forwardedInfo.IsForwarded,
 		ForwardingScore: int(forwardedInfo.ForwardingScore),
+		RepliedToID:     replyInfo.RepliedToID,
+		QuotedBody:      replyInfo.QuotedBody,
+		QuotedSender:    replyInfo.QuotedSender,
 		MediaType:       mediaType,
 		Filename:        filename,
 		URL:             url,
@@ -1095,6 +1112,7 @@ func (r *SQLiteRepository) StoreSentMessageWithContext(ctx context.Context, mess
 		mediaType, filename, mediaURL, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength = utils.ExtractMediaInfo(msg)
 	}
 	forwardedInfo := utils.BuildForwardedInfoFromMessage(msg)
+	replyInfo := utils.BuildQuotedReplyInfoFromMessage(msg)
 
 	// Store the sent message
 	message := &domainChatStorage.Message{
@@ -1107,6 +1125,9 @@ func (r *SQLiteRepository) StoreSentMessageWithContext(ctx context.Context, mess
 		IsFromMe:        true,
 		IsForwarded:     forwardedInfo.IsForwarded,
 		ForwardingScore: int(forwardedInfo.ForwardingScore),
+		RepliedToID:     replyInfo.RepliedToID,
+		QuotedBody:      replyInfo.QuotedBody,
+		QuotedSender:    replyInfo.QuotedSender,
 		MediaType:       mediaType,
 		Filename:        filename,
 		URL:             mediaURL,
@@ -1276,5 +1297,14 @@ func (r *SQLiteRepository) getMigrations() []string {
 
 		// Migration 18: Persist WhatsApp forwarding score for frequently-forwarded caution.
 		`ALTER TABLE messages ADD COLUMN forwarding_score INTEGER DEFAULT 0`,
+
+		// Migration 19: Persist WhatsApp quoted reply context for chat previews.
+		`ALTER TABLE messages ADD COLUMN replied_to_id TEXT DEFAULT ''`,
+
+		// Migration 20: Persist the quoted message preview body.
+		`ALTER TABLE messages ADD COLUMN quoted_body TEXT DEFAULT ''`,
+
+		// Migration 21: Persist the WhatsApp JID of the quoted message sender.
+		`ALTER TABLE messages ADD COLUMN quoted_sender TEXT DEFAULT ''`,
 	}
 }

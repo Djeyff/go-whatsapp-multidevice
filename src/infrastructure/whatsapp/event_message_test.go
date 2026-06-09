@@ -199,6 +199,50 @@ func TestBuildEventPayloadIncludesForwardedContext(t *testing.T) {
 	}
 }
 
+func TestBuildEventPayloadIncludesQuotedReplyContext(t *testing.T) {
+	config.WhatsappAutoDownloadMedia = false
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("123", types.DefaultUserServer),
+				Sender:   types.NewJID("456", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "REPLY123",
+			Timestamp: time.Date(2026, time.June, 9, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: protoString("Ok me avisa"),
+				ContextInfo: &waE2E.ContextInfo{
+					StanzaID:    protoString("ORIGINAL123"),
+					Participant: protoString("123@s.whatsapp.net"),
+					QuotedMessage: &waE2E.Message{
+						Conversation: protoString("Ahora con el depósito, hay para el seguro."),
+					},
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if eventType != EventTypeMessage {
+		t.Fatalf("expected event type %s, got %s", EventTypeMessage, eventType)
+	}
+	if got := payload["replied_to_id"]; got != "ORIGINAL123" {
+		t.Fatalf("expected replied_to_id ORIGINAL123, got %#v", got)
+	}
+	if got := payload["quoted_body"]; got != "Ahora con el depósito, hay para el seguro." {
+		t.Fatalf("expected quoted_body to round trip, got %#v", got)
+	}
+	if got := payload["quoted_sender"]; got != "123@s.whatsapp.net" {
+		t.Fatalf("expected quoted_sender to round trip, got %#v", got)
+	}
+}
+
 func TestBuildEventPayloadImageWithCaption(t *testing.T) {
 	config.WhatsappAutoDownloadMedia = false
 	caption := "Check this out!"
