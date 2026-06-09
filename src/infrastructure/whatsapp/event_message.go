@@ -117,6 +117,7 @@ func buildEventPayload(ctx context.Context, client *whatsmeow.Client, evt *event
 					payload["body"] = editedConv
 				}
 			}
+			buildForwardedFields(evt, payload)
 			return EventTypeMessageEdited, payload, nil
 		}
 	}
@@ -208,14 +209,23 @@ func buildMessageBody(ctx context.Context, client *whatsmeow.Client, evt *events
 	return nil
 }
 
+func buildForwardedFields(evt *events.Message, payload map[string]any) {
+	forwardedInfo := utils.BuildForwardedInfo(evt)
+	if forwardedInfo.IsForwarded {
+		payload["forwarded"] = true
+		payload["is_forwarded"] = true
+	}
+	if forwardedInfo.ForwardingScore > 0 {
+		payload["forwarding_score"] = forwardedInfo.ForwardingScore
+	}
+}
+
 func buildOptionalFields(ctx context.Context, client *whatsmeow.Client, evt *events.Message, msg *waE2E.Message, payload map[string]any) error {
 	if evt.IsViewOnce {
 		payload["view_once"] = true
 	}
 
-	if utils.BuildForwarded(evt) {
-		payload["forwarded"] = true
-	}
+	buildForwardedFields(evt, payload)
 
 	if err := buildMediaFields(ctx, client, msg, payload); err != nil {
 		return err

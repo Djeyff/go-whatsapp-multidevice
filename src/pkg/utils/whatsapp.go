@@ -834,16 +834,125 @@ func BuildEventReaction(evt *events.Message) (waReaction EvtReaction) {
 	return waReaction
 }
 
-func BuildForwarded(evt *events.Message) bool {
-	msg := UnwrapMessage(evt.Message)
-	if extendedText := msg.GetExtendedTextMessage(); extendedText != nil {
-		return extendedText.ContextInfo.GetIsForwarded()
-	} else if protocolMessage := msg.GetProtocolMessage(); protocolMessage != nil {
-		if editedMessage := protocolMessage.GetEditedMessage(); editedMessage != nil {
-			if extendedText := editedMessage.GetExtendedTextMessage(); extendedText != nil {
-				return extendedText.ContextInfo.GetIsForwarded()
-			}
+type ForwardedInfo struct {
+	IsForwarded     bool
+	ForwardingScore uint32
+}
+
+func forwardedInfoFromContext(ctx *waE2E.ContextInfo) ForwardedInfo {
+	if ctx == nil {
+		return ForwardedInfo{}
+	}
+	score := ctx.GetForwardingScore()
+	return ForwardedInfo{
+		IsForwarded:     ctx.GetIsForwarded() || score > 0,
+		ForwardingScore: score,
+	}
+}
+
+func firstForwardedInfo(contexts ...*waE2E.ContextInfo) ForwardedInfo {
+	for _, ctx := range contexts {
+		info := forwardedInfoFromContext(ctx)
+		if info.IsForwarded || info.ForwardingScore > 0 {
+			return info
 		}
 	}
-	return false
+	return ForwardedInfo{}
+}
+
+func BuildForwardedInfo(evt *events.Message) ForwardedInfo {
+	if evt == nil {
+		return ForwardedInfo{}
+	}
+	return BuildForwardedInfoFromMessage(evt.Message)
+}
+
+func BuildForwardedInfoFromMessage(message *waE2E.Message) ForwardedInfo {
+	msg := UnwrapMessage(message)
+	if msg == nil {
+		return ForwardedInfo{}
+	}
+
+	contexts := make([]*waE2E.ContextInfo, 0, 24)
+	if extendedText := msg.GetExtendedTextMessage(); extendedText != nil {
+		contexts = append(contexts, extendedText.GetContextInfo())
+	}
+	if image := msg.GetImageMessage(); image != nil {
+		contexts = append(contexts, image.GetContextInfo())
+	}
+	if video := msg.GetVideoMessage(); video != nil {
+		contexts = append(contexts, video.GetContextInfo())
+	}
+	if audio := msg.GetAudioMessage(); audio != nil {
+		contexts = append(contexts, audio.GetContextInfo())
+	}
+	if document := msg.GetDocumentMessage(); document != nil {
+		contexts = append(contexts, document.GetContextInfo())
+	}
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		contexts = append(contexts, sticker.GetContextInfo())
+	}
+	if contact := msg.GetContactMessage(); contact != nil {
+		contexts = append(contexts, contact.GetContextInfo())
+	}
+	if contacts := msg.GetContactsArrayMessage(); contacts != nil {
+		contexts = append(contexts, contacts.GetContextInfo())
+	}
+	if location := msg.GetLocationMessage(); location != nil {
+		contexts = append(contexts, location.GetContextInfo())
+	}
+	if liveLocation := msg.GetLiveLocationMessage(); liveLocation != nil {
+		contexts = append(contexts, liveLocation.GetContextInfo())
+	}
+	if buttonsResponse := msg.GetButtonsResponseMessage(); buttonsResponse != nil {
+		contexts = append(contexts, buttonsResponse.GetContextInfo())
+	}
+	if buttons := msg.GetButtonsMessage(); buttons != nil {
+		contexts = append(contexts, buttons.GetContextInfo())
+	}
+	if listResponse := msg.GetListResponseMessage(); listResponse != nil {
+		contexts = append(contexts, listResponse.GetContextInfo())
+	}
+	if list := msg.GetListMessage(); list != nil {
+		contexts = append(contexts, list.GetContextInfo())
+	}
+	if interactiveResponse := msg.GetInteractiveResponseMessage(); interactiveResponse != nil {
+		contexts = append(contexts, interactiveResponse.GetContextInfo())
+	}
+	if interactive := msg.GetInteractiveMessage(); interactive != nil {
+		contexts = append(contexts, interactive.GetContextInfo())
+	}
+	if templateButtonReply := msg.GetTemplateButtonReplyMessage(); templateButtonReply != nil {
+		contexts = append(contexts, templateButtonReply.GetContextInfo())
+	}
+	if template := msg.GetTemplateMessage(); template != nil {
+		contexts = append(contexts, template.GetContextInfo())
+	}
+	if product := msg.GetProductMessage(); product != nil {
+		contexts = append(contexts, product.GetContextInfo())
+	}
+	if groupInvite := msg.GetGroupInviteMessage(); groupInvite != nil {
+		contexts = append(contexts, groupInvite.GetContextInfo())
+	}
+	if event := msg.GetEventMessage(); event != nil {
+		contexts = append(contexts, event.GetContextInfo())
+	}
+	if album := msg.GetAlbumMessage(); album != nil {
+		contexts = append(contexts, album.GetContextInfo())
+	}
+
+	if info := firstForwardedInfo(contexts...); info.IsForwarded || info.ForwardingScore > 0 {
+		return info
+	}
+
+	if protocolMessage := msg.GetProtocolMessage(); protocolMessage != nil {
+		if editedMessage := protocolMessage.GetEditedMessage(); editedMessage != nil {
+			return BuildForwardedInfoFromMessage(editedMessage)
+		}
+	}
+	return ForwardedInfo{}
+}
+
+func BuildForwarded(evt *events.Message) bool {
+	return BuildForwardedInfo(evt).IsForwarded
 }
