@@ -128,6 +128,7 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 			// Extract message content and media info
 			content := utils.ExtractMessageTextFromProto(msg.GetMessage())
 			mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength := utils.ExtractMediaInfo(msg.GetMessage())
+			forwardedInfo := utils.BuildForwardedInfoFromMessage(msg.GetMessage())
 
 			// Skip if there's no content and no media
 			if content == "" && mediaType == "" {
@@ -187,21 +188,23 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 
 			// Create message object and add to batch
 			message := &domainChatStorage.Message{
-				ID:            messageID,
-				ChatJID:       chatJID,
-				DeviceID:      deviceID,
-				Sender:        sender,
-				Content:       content,
-				Timestamp:     timestamp,
-				IsFromMe:      isFromMe,
-				MediaType:     mediaType,
-				Filename:      filename,
-				URL:           url,
-				DirectPath:    directPath,
-				MediaKey:      mediaKey,
-				FileSHA256:    fileSHA256,
-				FileEncSHA256: fileEncSHA256,
-				FileLength:    fileLength,
+				ID:              messageID,
+				ChatJID:         chatJID,
+				DeviceID:        deviceID,
+				Sender:          sender,
+				Content:         content,
+				Timestamp:       timestamp,
+				IsFromMe:        isFromMe,
+				IsForwarded:     forwardedInfo.IsForwarded,
+				ForwardingScore: int(forwardedInfo.ForwardingScore),
+				MediaType:       mediaType,
+				Filename:        filename,
+				URL:             url,
+				DirectPath:      directPath,
+				MediaKey:        mediaKey,
+				FileSHA256:      fileSHA256,
+				FileEncSHA256:   fileEncSHA256,
+				FileLength:      fileLength,
 			}
 
 			messageBatch = append(messageBatch, message)
