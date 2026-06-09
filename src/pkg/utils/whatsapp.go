@@ -770,30 +770,61 @@ func GetMessageDigestOrSignature(msg, key []byte) (string, error) {
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
-// UnwrapMessage unwraps FutureProof wrappers (ephemeral, view-once, etc.)
-// to access the inner message content. WhatsApp wraps messages in these
-// containers when disappearing messages or view-once is enabled.
+func unwrapFutureProofMessage(msg *waE2E.Message) *waE2E.Message {
+	if msg == nil {
+		return nil
+	}
+	wrappers := []*waE2E.FutureProofMessage{
+		msg.GetBotInvokeMessage(),
+		msg.GetViewOnceMessage(),
+		msg.GetEphemeralMessage(),
+		msg.GetDocumentWithCaptionMessage(),
+		msg.GetEditedMessage(),
+		msg.GetViewOnceMessageV2(),
+		msg.GetViewOnceMessageV2Extension(),
+		msg.GetGroupMentionedMessage(),
+		msg.GetEventCoverImage(),
+		msg.GetLottieStickerMessage(),
+		msg.GetStatusMentionMessage(),
+		msg.GetPollCreationOptionImageMessage(),
+		msg.GetAssociatedChildMessage(),
+		msg.GetGroupStatusMentionMessage(),
+		msg.GetPollCreationMessageV4(),
+		msg.GetStatusAddYours(),
+		msg.GetGroupStatusMessage(),
+		msg.GetGroupStatusMessageV2(),
+		msg.GetLimitSharingMessage(),
+		msg.GetBotTaskMessage(),
+		msg.GetQuestionMessage(),
+		msg.GetQuestionReplyMessage(),
+		msg.GetNewsletterAdminProfileMessage(),
+		msg.GetNewsletterAdminProfileMessageV2(),
+		msg.GetSpoilerMessage(),
+		msg.GetBotForwardedMessage(),
+	}
+	for _, wrapper := range wrappers {
+		if wrapper != nil && wrapper.GetMessage() != nil {
+			return wrapper.GetMessage()
+		}
+	}
+	return nil
+}
+
+// UnwrapMessage unwraps container messages (device-sent, future-proof,
+// ephemeral, view-once, etc.) to access the inner message content.
 // The original message is not modified; the unwrapped inner message is returned.
 func UnwrapMessage(msg *waE2E.Message) *waE2E.Message {
 	if msg == nil {
 		return msg
 	}
 	inner := msg
-	for i := 0; i < 3; i++ { // safeguard against excessively nested wrappers
-		if vm := inner.GetViewOnceMessage(); vm != nil && vm.GetMessage() != nil {
-			inner = vm.GetMessage()
+	for i := 0; i < 8; i++ { // safeguard against excessively nested wrappers
+		if deviceSent := inner.GetDeviceSentMessage(); deviceSent != nil && deviceSent.GetMessage() != nil {
+			inner = deviceSent.GetMessage()
 			continue
 		}
-		if em := inner.GetEphemeralMessage(); em != nil && em.GetMessage() != nil {
-			inner = em.GetMessage()
-			continue
-		}
-		if vm2 := inner.GetViewOnceMessageV2(); vm2 != nil && vm2.GetMessage() != nil {
-			inner = vm2.GetMessage()
-			continue
-		}
-		if vm2e := inner.GetViewOnceMessageV2Extension(); vm2e != nil && vm2e.GetMessage() != nil {
-			inner = vm2e.GetMessage()
+		if wrapped := unwrapFutureProofMessage(inner); wrapped != nil {
+			inner = wrapped
 			continue
 		}
 		break

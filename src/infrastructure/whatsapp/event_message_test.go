@@ -139,6 +139,32 @@ func TestBuildEventPayloadIncludesForwardedContext(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "device sent extended text",
+			message: &waE2E.Message{
+				DeviceSentMessage: &waE2E.DeviceSentMessage{
+					Message: &waE2E.Message{
+						ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+							Text:        protoString("forwarded from companion"),
+							ContextInfo: forwardedContext,
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "bot forwarded future proof text",
+			message: &waE2E.Message{
+				BotForwardedMessage: &waE2E.FutureProofMessage{
+					Message: &waE2E.Message{
+						ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+							Text:        protoString("forwarded future proof text"),
+							ContextInfo: forwardedContext,
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
