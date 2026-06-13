@@ -3,6 +3,7 @@ package cmd
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -74,6 +75,47 @@ func TestPassiveListenerGuardPresenceHeartbeatException(t *testing.T) {
 	}
 	if resp.StatusCode != fiber.StatusForbidden {
 		t.Fatalf("message status = %d, want %d", resp.StatusCode, fiber.StatusForbidden)
+	}
+}
+
+func TestBasicAuthConfigFailsClosedInProduction(t *testing.T) {
+	prevAppEnv, hadAppEnv := os.LookupEnv("APP_ENV")
+	prevNodeEnv, hadNodeEnv := os.LookupEnv("NODE_ENV")
+	t.Cleanup(func() {
+		if hadAppEnv {
+			os.Setenv("APP_ENV", prevAppEnv)
+		} else {
+			os.Unsetenv("APP_ENV")
+		}
+		if hadNodeEnv {
+			os.Setenv("NODE_ENV", prevNodeEnv)
+		} else {
+			os.Unsetenv("NODE_ENV")
+		}
+	})
+
+	os.Setenv("APP_ENV", "production")
+	os.Unsetenv("NODE_ENV")
+	if _, err := basicAuthAccounts(nil); err == nil {
+		t.Fatal("production without APP_BASIC_AUTH should fail closed")
+	}
+
+	os.Setenv("APP_ENV", "development")
+	if accounts, err := basicAuthAccounts(nil); err != nil || len(accounts) != 0 {
+		t.Fatalf("development without APP_BASIC_AUTH should stay local-only, accounts=%v err=%v", accounts, err)
+	}
+
+	os.Setenv("APP_ENV", "production")
+	if _, err := basicAuthAccounts([]string{"broken"}); err == nil {
+		t.Fatal("invalid basic auth credential should fail")
+	}
+
+	accounts, err := basicAuthAccounts([]string{"admin:secret"})
+	if err != nil {
+		t.Fatalf("valid production basic auth returned error: %v", err)
+	}
+	if accounts["admin"] != "secret" {
+		t.Fatalf("valid production basic auth account missing: %#v", accounts)
 	}
 }
 
