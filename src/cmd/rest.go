@@ -144,6 +144,35 @@ func chatwootWebhookGate(handler fiber.Handler) fiber.Handler {
 	}
 }
 
+func basicAuthRequiredEnvironment() bool {
+	env := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("APP_ENV"), os.Getenv("NODE_ENV"), "production")))
+	switch env {
+	case "local", "dev", "development", "test", "testing":
+		return false
+	default:
+		return true
+	}
+}
+
+func basicAuthAccounts(credentials []string) (map[string]string, error) {
+	account := make(map[string]string)
+	for _, basicAuth := range credentials {
+		basicAuth = strings.TrimSpace(basicAuth)
+		if basicAuth == "" {
+			continue
+		}
+		user, password, ok := strings.Cut(basicAuth, ":")
+		if !ok || strings.TrimSpace(user) == "" || password == "" {
+			return nil, fmt.Errorf("basic auth is not valid, use <user>:<secret>")
+		}
+		account[strings.TrimSpace(user)] = password
+	}
+	if len(account) == 0 && basicAuthRequiredEnvironment() {
+		return nil, fmt.Errorf("APP_BASIC_AUTH is required outside local/dev/test environments")
+	}
+	return account, nil
+}
+
 func restServer(_ *cobra.Command, _ []string) {
 	engine := html.NewFileSystem(http.FS(EmbedIndex), ".html")
 	engine.AddFunc("isEnableBasicAuth", func(token any) bool {
@@ -229,16 +258,11 @@ func restServer(_ *cobra.Command, _ []string) {
 		app.Post(webhookPath, chatwootWebhookGate(chatwootHandler.HandleWebhook))
 	}
 
-	if len(config.AppBasicAuthCredential) > 0 {
-		account := make(map[string]string)
-		for _, basicAuth := range config.AppBasicAuthCredential {
-			ba := strings.Split(basicAuth, ":")
-			if len(ba) != 2 {
-				logrus.Fatalln("Basic auth is not valid, please this following format <user>:<secret>")
-			}
-			account[ba[0]] = ba[1]
-		}
-
+	account, err := basicAuthAccounts(config.AppBasicAuthCredential)
+	if err != nil {
+		logrus.Fatalln(err)
+	}
+	if len(account) > 0 {
 		app.Use(basicauth.New(basicauth.Config{
 			Users: account,
 		}))
