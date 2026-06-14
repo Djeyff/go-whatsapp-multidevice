@@ -12,5 +12,6 @@ type IDeviceUsecase interface {
 	LoginDeviceWithCode(ctx context.Context, deviceID string, phone string) (string, error)
 	LogoutDevice(ctx context.Context, deviceID string) error
 	ReconnectDevice(ctx context.Context, deviceID string) error
+	RequestFullHistorySync(ctx context.Context, deviceID string, days int) (*FullHistorySyncRequest, error)
 	GetStatus(ctx context.Context, deviceID string) (isConnected bool, isLoggedIn bool, err error)
 }

@@ -1,6 +1,8 @@
 package rest
 
 import (
+	"strings"
+
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/device"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/gofiber/fiber/v2"
@@ -23,6 +25,7 @@ func InitRestDevice(app fiber.Router, service device.IDeviceUsecase) Device {
 	app.Post("/devices/:device_id/login/code", rest.LoginDeviceWithCode)
 	app.Post("/devices/:device_id/logout", rest.LogoutDevice)
 	app.Post("/devices/:device_id/reconnect", rest.ReconnectDevice)
+	app.Post("/devices/:device_id/history-sync/full", rest.RequestFullHistorySync)
 	app.Get("/devices/:device_id/status", rest.Status)
 
 	return rest
@@ -150,6 +153,79 @@ func (handler *Device) ReconnectDevice(c *fiber.Ctx) error {
 		Status:  200,
 		Code:    "SUCCESS",
 		Message: "Reconnect requested",
+		Results: nil,
+	})
+}
+
+func (handler *Device) RequestFullHistorySync(c *fiber.Ctx) error {
+	deviceID := strings.TrimSpace(c.Params("device_id"))
+	if deviceID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ResponseData{
+			Status:  fiber.StatusBadRequest,
+			Code:    "BAD_REQUEST",
+			Message: "device_id is required",
+			Results: nil,
+		})
+	}
+
+	days := c.QueryInt("days", 0)
+	if len(c.Body()) > 0 {
+		var req struct {
+			Days int `json:"days"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(utils.ResponseData{
+				Status:  400,
+				Code:    "BAD_REQUEST",
+				Message: "Invalid request body",
+				Results: nil,
+			})
+		}
+		if req.Days > 0 {
+			days = req.Days
+		}
+	}
+
+	result, err := handler.Service.RequestFullHistorySync(c.UserContext(), deviceID, days)
+	if err != nil {
+		return fullHistorySyncErrorResponse(c, err)
+	}
+
+	return c.JSON(utils.ResponseData{
+		Status:  200,
+		Code:    "SUCCESS",
+		Message: "Full history sync requested",
+		Results: result,
+	})
+}
+
+func fullHistorySyncErrorResponse(c *fiber.Ctx, err error) error {
+	message := err.Error()
+	status := fiber.StatusInternalServerError
+	code := "FULL_HISTORY_SYNC_ERROR"
+
+	switch {
+	case strings.Contains(message, "device id is required"):
+		status = fiber.StatusBadRequest
+		code = "BAD_REQUEST"
+	case strings.Contains(message, "not found"):
+		status = fiber.StatusNotFound
+		code = "DEVICE_NOT_FOUND"
+	case strings.Contains(message, "not logged in"), strings.Contains(message, "not connected"), strings.Contains(message, "client not initialized"):
+		status = fiber.StatusConflict
+		code = "DEVICE_NOT_READY"
+	case strings.Contains(message, "cooldown active"):
+		status = fiber.StatusTooManyRequests
+		code = "HISTORY_SYNC_COOLDOWN"
+	case strings.Contains(message, "request full history sync"):
+		status = fiber.StatusBadGateway
+		code = "FULL_HISTORY_SYNC_SEND_FAILED"
+	}
+
+	return c.Status(status).JSON(utils.ResponseData{
+		Status:  status,
+		Code:    code,
+		Message: message,
 		Results: nil,
 	})
 }

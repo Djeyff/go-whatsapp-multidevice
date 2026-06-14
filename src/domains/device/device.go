@@ -23,3 +23,14 @@ type Device struct {
 	JID         string      `json:"jid,omitempty"`
 	CreatedAt   time.Time   `json:"created_at"`
 }
+
+// FullHistorySyncRequest describes a bounded on-demand history sync request.
+type FullHistorySyncRequest struct {
+	DeviceID      string    `json:"device_id"`
+	RequestID     string    `json:"request_id"`
+	RequestedDays int       `json:"requested_days,omitempty"`
+	Days          int       `json:"days"`
+	MaxDays       int       `json:"max_days"`
+	FromTimestamp int64     `json:"from_timestamp"`
+	RequestedAt   time.Time `json:"requested_at"`
+}
