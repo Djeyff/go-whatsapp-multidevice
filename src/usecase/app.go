@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
@@ -97,6 +98,8 @@ func (service *serviceApp) Login(ctx context.Context, deviceID string) (response
 				}
 			} else {
 				logrus.Errorf("[LOGIN][%s] error when get qrCode %s %v", deviceID, evt.Event, evt.Error)
+				eventType, severity, reasonClass, summary := classifyQRSessionEvent(evt)
+				whatsapp.NotifySessionEvent(context.Background(), instance, eventType, severity, reasonClass, summary)
 			}
 		}
 	}()
@@ -119,6 +122,7 @@ func (service *serviceApp) Login(ctx context.Context, deviceID string) (response
 	case <-ctx.Done():
 		return response, ctx.Err()
 	case <-time.After(120 * time.Second):
+		whatsapp.NotifySessionEvent(context.Background(), instance, "qr_expired", "attention", "qr_wait_timeout", "WhatsApp QR login timed out before the user scanned it")
 		return response, fmt.Errorf("timeout waiting for QR code")
 	}
 
@@ -144,6 +148,7 @@ func (service *serviceApp) LoginWithCode(ctx context.Context, deviceID string, p
 	// Connect before requesting pairing code.
 	if !client.IsConnected() {
 		if err = client.Connect(); err != nil {
+			whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", "pairing_code_connect_failed", "WhatsApp pairing-code login could not establish a connection")
 			return loginCode, err
 		}
 	}
@@ -152,6 +157,7 @@ func (service *serviceApp) LoginWithCode(ctx context.Context, deviceID string, p
 	loginCode, err = client.PairPhone(ctx, phoneNumber, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		logrus.Errorf("Error when pairing phone: %s", err.Error())
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", "pairing_code_request_failed", "WhatsApp pairing-code request failed")
 		return loginCode, err
 	}
 
@@ -197,6 +203,7 @@ func (service *serviceApp) Reconnect(_ context.Context, deviceID string) (err er
 	}
 
 	if client.Store == nil || client.Store.ID == nil {
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "critical", "session_deleted", "WhatsApp stored session is missing and cannot reconnect automatically")
 		return fmt.Errorf("device %s is not logged in (session deleted)", deviceID)
 	}
 
@@ -205,8 +212,24 @@ func (service *serviceApp) Reconnect(_ context.Context, deviceID string) (err er
 	instance.UpdateStateFromClient()
 	if err != nil {
 		logrus.Errorf("[RECONNECT][%s] Reconnect failed: %v", deviceID, err)
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", "reconnect_failed", "WhatsApp reconnect attempt failed")
 	}
 	return err
+}
+
+func classifyQRSessionEvent(evt whatsmeow.QRChannelItem) (string, string, string, string) {
+	event := strings.ToLower(strings.TrimSpace(evt.Event))
+	errText := strings.ToLower(strings.TrimSpace(fmt.Sprint(evt.Error)))
+	switch {
+	case strings.Contains(event, "timeout") || strings.Contains(errText, "timeout") || strings.Contains(event, "expired"):
+		return "qr_expired", "attention", "qr_channel_timeout", "WhatsApp QR login expired before pairing completed"
+	case strings.Contains(event, "client-outdated"):
+		return "reconnect_blocked", "attention", "qr_client_outdated", "WhatsApp QR login was blocked because the client is out of date"
+	case strings.Contains(event, "scanned-without-multidevice"):
+		return "qr_invalid", "attention", "qr_scanned_without_multidevice", "WhatsApp QR was scanned without linked-device support enabled"
+	default:
+		return "qr_invalid", "attention", "qr_channel_invalid", "WhatsApp QR login returned an invalid or unexpected QR event"
+	}
 }
 
 func (service *serviceApp) Status(_ context.Context, deviceID string) (bool, bool, error) {

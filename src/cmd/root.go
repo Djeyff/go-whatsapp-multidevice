@@ -163,6 +163,12 @@ func initEnvConfig() {
 	if protectedDeviceID := viper.GetString("gowa_device_id"); protectedDeviceID != "" {
 		config.RetenaProtectedGowaDeviceIDs = append(config.RetenaProtectedGowaDeviceIDs, protectedDeviceID)
 	}
+	if eventWebhook := viper.GetString("retena_session_event_webhook"); eventWebhook != "" {
+		config.RetenaSessionEventWebhook = eventWebhook
+	}
+	if eventWebhookSecret := viper.GetString("retena_session_event_webhook_secret"); eventWebhookSecret != "" {
+		config.RetenaSessionEventWebhookSecret = eventWebhookSecret
+	}
 
 	// Database settings
 	if envDBURI := viper.GetString("db_uri"); envDBURI != "" {
@@ -314,6 +320,18 @@ func initFlags() {
 		"retena-passive-presence-available-heartbeat", "",
 		config.RetenaPassivePresenceAvailableHeartbeat,
 		`also allow available /send/presence for targeted Retena inactivity canaries while passive listener mode blocks other mutating routes --retena-passive-presence-available-heartbeat <true/false> | example: --retena-passive-presence-available-heartbeat=false`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.RetenaSessionEventWebhook,
+		"retena-session-event-webhook", "",
+		config.RetenaSessionEventWebhook,
+		`optional Retena internal endpoint for redacted session risk telemetry --retena-session-event-webhook <url> | example: --retena-session-event-webhook=https://api.retena.app/internal/gowa/session-event`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.RetenaSessionEventWebhookSecret,
+		"retena-session-event-webhook-secret", "",
+		config.RetenaSessionEventWebhookSecret,
+		`shared secret for Retena session event telemetry --retena-session-event-webhook-secret <secret>`,
 	)
 
 	// WhatsApp flags

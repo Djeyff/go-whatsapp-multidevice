@@ -128,15 +128,21 @@ func (s *serviceDevice) ReconnectDevice(_ context.Context, deviceID string) erro
 	if inst, ok := s.manager.GetDevice(deviceID); ok {
 		client := inst.GetClient()
 		if client == nil {
+			whatsapp.NotifySessionEvent(context.Background(), inst, "reconnect_blocked", "attention", "device_client_missing", "WhatsApp reconnect could not start because the device client is missing")
 			return fmt.Errorf("device %s client not initialized", deviceID)
 		}
 
 		if client.Store == nil || client.Store.ID == nil {
+			whatsapp.NotifySessionEvent(context.Background(), inst, "reconnect_blocked", "critical", "session_deleted", "WhatsApp stored session is missing and cannot reconnect automatically")
 			return fmt.Errorf("device %s is not logged in (session deleted)", deviceID)
 		}
 
 		client.Disconnect()
-		return client.Connect()
+		if err := client.Connect(); err != nil {
+			whatsapp.NotifySessionEvent(context.Background(), inst, "reconnect_blocked", "attention", "device_reconnect_failed", "WhatsApp device reconnect attempt failed")
+			return err
+		}
+		return nil
 	}
 	return fmt.Errorf("device %s not found", deviceID)
 }

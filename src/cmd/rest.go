@@ -94,6 +94,49 @@ func passiveListenerGuard(c *fiber.Ctx) error {
 	})
 }
 
+func passiveSafetyStatus() fiber.Map {
+	presenceOnConnect := strings.ToLower(strings.TrimSpace(config.WhatsappPresenceOnConnect))
+	autoReplyEnabled := strings.TrimSpace(config.WhatsappAutoReplyMessage) != ""
+	unsafeFindings := []string{}
+	if !config.RetenaPassiveListenerMode {
+		unsafeFindings = append(unsafeFindings, "retena_passive_listener_mode_disabled")
+	}
+	if autoReplyEnabled {
+		unsafeFindings = append(unsafeFindings, "whatsapp_auto_reply_enabled")
+	}
+	if config.WhatsappAutoMarkRead {
+		unsafeFindings = append(unsafeFindings, "whatsapp_auto_mark_read_enabled")
+	}
+	if config.WhatsappAutoDownloadMedia {
+		unsafeFindings = append(unsafeFindings, "whatsapp_auto_download_media_enabled")
+	}
+	if config.WhatsappAutoRejectCall {
+		unsafeFindings = append(unsafeFindings, "whatsapp_auto_reject_call_enabled")
+	}
+	if presenceOnConnect != "" && presenceOnConnect != "none" {
+		unsafeFindings = append(unsafeFindings, "whatsapp_presence_on_connect_not_none")
+	}
+
+	return fiber.Map{
+		"ok":                                         len(unsafeFindings) == 0,
+		"service":                                    "go-whatsapp-multidevice",
+		"version":                                    config.AppVersion,
+		"commit":                                     firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+		"passive_listener_mode":                      config.RetenaPassiveListenerMode,
+		"passive_presence_heartbeat":                 config.RetenaPassivePresenceHeartbeat,
+		"passive_presence_available_heartbeat":       config.RetenaPassivePresenceAvailableHeartbeat,
+		"whatsapp_auto_reply_enabled":                autoReplyEnabled,
+		"whatsapp_auto_mark_read":                    config.WhatsappAutoMarkRead,
+		"whatsapp_auto_download_media":               config.WhatsappAutoDownloadMedia,
+		"whatsapp_auto_reject_call":                  config.WhatsappAutoRejectCall,
+		"whatsapp_presence_on_connect":               presenceOnConnect,
+		"session_event_webhook_configured":           strings.TrimSpace(config.RetenaSessionEventWebhook) != "",
+		"session_event_webhook_secret_configured":    strings.TrimSpace(config.RetenaSessionEventWebhookSecret) != "",
+		"session_event_webhook_secret_value_exposed": false,
+		"unsafe_findings":                            unsafeFindings,
+	}
+}
+
 func chatwootWebhookSecretCandidates(c *fiber.Ctx) []string {
 	candidates := []string{
 		c.Get("X-Chatwoot-Webhook-Secret"),
@@ -281,6 +324,10 @@ func restServer(_ *cobra.Command, _ []string) {
 				"observabilityRoute": "/health/observability",
 			},
 		})
+	})
+
+	app.Get("/health/passive-safety", func(c *fiber.Ctx) error {
+		return c.JSON(passiveSafetyStatus())
 	})
 
 	app.Post("/debug/sentry", func(c *fiber.Ctx) error {
