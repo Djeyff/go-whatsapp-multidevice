@@ -11,6 +11,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
@@ -32,33 +33,67 @@ var (
 	startupTime   = time.Now().Unix()
 )
 
-func syncKeysDevice(ctx context.Context, db, keysDB *sqlstore.Container) {
-	if keysDB == nil {
+func syncKeysDevice(ctx context.Context, db, keysDB *sqlstore.Container, targetJID ...types.JID) {
+	if db == nil || keysDB == nil {
 		return
 	}
 
-	dev, err := db.GetFirstDevice(ctx)
+	var dev *store.Device
+	var err error
+	if len(targetJID) > 0 && !targetJID[0].IsEmpty() {
+		dev, err = findStoreDeviceByJID(ctx, db, targetJID[0])
+	} else {
+		dev, err = db.GetFirstDevice(ctx)
+	}
 	if err != nil {
 		log.Errorf("Failed to get all devices: %v", err)
-	} else {
-		found := false
-		if devs, err := keysDB.GetAllDevices(ctx); err != nil {
-			log.Errorf("Failed to get all devices: %v", err)
-		} else {
-			for _, d := range devs {
-				if d.ID == dev.ID {
-					found = true
-					break
-				} else {
-					keysDB.DeleteDevice(ctx, d)
-				}
-			}
+		return
+	}
+	if dev == nil || dev.ID == nil {
+		return
+	}
 
-			if !found {
-				keysDB.PutDevice(ctx, dev)
-			}
+	found := false
+	devs, err := keysDB.GetAllDevices(ctx)
+	if err != nil {
+		log.Errorf("Failed to get all devices: %v", err)
+		return
+	}
+	for _, d := range devs {
+		if d != nil && d.ID != nil && d.ID.ToNonAD().String() == dev.ID.ToNonAD().String() {
+			found = true
+			break
+		}
+		if len(targetJID) == 0 && d != nil {
+			keysDB.DeleteDevice(ctx, d)
 		}
 	}
+	if !found {
+		keysDB.PutDevice(ctx, dev)
+	}
+}
+
+func findStoreDeviceByJID(ctx context.Context, db *sqlstore.Container, jid types.JID) (*store.Device, error) {
+	if db == nil || jid.IsEmpty() {
+		return nil, nil
+	}
+
+	if dev, err := db.GetDevice(ctx, jid); err == nil && dev != nil {
+		return dev, nil
+	}
+
+	target := jid.ToNonAD().String()
+	devices, err := db.GetAllDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, dev := range devices {
+		if dev != nil && dev.ID != nil && dev.ID.ToNonAD().String() == target {
+			return dev, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // InitWaCLI initializes the WhatsApp client
@@ -87,7 +122,7 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	if keysContainer != nil && device.ID != nil {
 		innerStore := sqlstore.NewSQLStore(keysStoreContainer, *device.ID)
 
-		syncKeysDevice(ctx, primaryDB, keysContainer)
+		syncKeysDevice(ctx, primaryDB, keysContainer, *device.ID)
 		device.Identities = innerStore
 		device.Sessions = innerStore
 		device.PreKeys = innerStore

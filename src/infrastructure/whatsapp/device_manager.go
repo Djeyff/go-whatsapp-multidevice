@@ -100,6 +100,35 @@ func (m *DeviceManager) GetDevice(id string) (*DeviceInstance, bool) {
 	return instance, ok
 }
 
+func (m *DeviceManager) getDeviceByJID(jid string) (*DeviceInstance, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, inst := range m.devices {
+		if inst != nil && sameJID(inst.JID(), jid) {
+			return inst, true
+		}
+	}
+	return nil, false
+}
+
+func normalizedJIDString(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	jid, err := types.ParseJID(raw)
+	if err != nil {
+		return raw
+	}
+	return jid.ToNonAD().String()
+}
+
+func sameJID(a, b string) bool {
+	a = normalizedJIDString(a)
+	b = normalizedJIDString(b)
+	return a != "" && b != "" && a == b
+}
+
 // IsHealthy returns true if the device manager is initialized and has a valid store connection.
 // Note: This is a service initialization check, not a live connectivity check.
 // Returning true indicates the internal store is ready, but does not guarantee
@@ -145,6 +174,14 @@ func (m *DeviceManager) ResolveDevice(deviceID string) (*DeviceInstance, string,
 		if inst, ok := m.GetDevice(trimmedID); ok && inst != nil {
 			return inst, trimmedID, nil
 		}
+		m.mu.RLock()
+		for id, inst := range m.devices {
+			if inst != nil && sameJID(inst.JID(), trimmedID) {
+				m.mu.RUnlock()
+				return inst, id, nil
+			}
+		}
+		m.mu.RUnlock()
 		return nil, trimmedID, fmt.Errorf("device %s not found", trimmedID)
 	}
 
@@ -404,45 +441,160 @@ func (m *DeviceManager) PurgeDevice(ctx context.Context, deviceID string) error 
 		}
 	}
 
-	// Remove device records from primary store
-	if m.store != nil {
-		if devices, err := m.store.GetAllDevices(ctx); err != nil {
-			logrus.WithError(err).Warn("[DEVICE_MANAGER] failed to enumerate devices for purge")
-			recordErr(err)
-		} else {
-			for _, dev := range devices {
-				if dev != nil && dev.ID != nil && dev.ID.String() == deviceID {
-					if err := m.store.DeleteDevice(ctx, dev); err != nil {
-						logrus.WithError(err).Warnf("[DEVICE_MANAGER] failed to delete device %s from store", deviceID)
-						recordErr(err)
-					}
-					break
-				}
-			}
-		}
+	storeJID := deviceID
+	if inst, ok := m.GetDevice(deviceID); ok && inst != nil && strings.TrimSpace(inst.JID()) != "" {
+		storeJID = inst.JID()
 	}
-
-	// Remove device records from keys store if separate
-	if m.keys != nil && m.keys != m.store {
-		if devices, err := m.keys.GetAllDevices(ctx); err != nil {
-			logrus.WithError(err).Warn("[DEVICE_MANAGER] failed to enumerate keys devices for purge")
-			recordErr(err)
-		} else {
-			for _, dev := range devices {
-				if dev != nil && dev.ID != nil && dev.ID.String() == deviceID {
-					if err := m.keys.DeleteDevice(ctx, dev); err != nil {
-						logrus.WithError(err).Warnf("[DEVICE_MANAGER] failed to delete device %s from keys store", deviceID)
-						recordErr(err)
-					}
-					break
-				}
-			}
-		}
+	if err := m.deleteStoreRowsForJID(ctx, storeJID); err != nil {
+		logrus.WithError(err).Warnf("[DEVICE_MANAGER] failed to delete store rows for device %s", deviceID)
+		recordErr(err)
 	}
 
 	// Remove from registry last
 	m.ForgetDevice(deviceID, true)
 	return firstErr
+}
+
+// LogoutDeviceKeepSlot logs out a device while preserving its registry slot for
+// an explicit future relink by the user.
+func (m *DeviceManager) LogoutDeviceKeepSlot(ctx context.Context, deviceID string) error {
+	if deviceID == "" {
+		return fmt.Errorf("device id is required")
+	}
+	inst, ok := m.GetDevice(deviceID)
+	if !ok || inst == nil {
+		return fmt.Errorf("device %s not found", deviceID)
+	}
+	if cli := inst.GetClient(); cli != nil {
+		if cli.Store != nil && cli.Store.ID != nil {
+			if err := cli.Logout(ctx); err != nil {
+				logrus.WithError(err).Warnf("[DEVICE_MANAGER] remote unlink failed for device %s (best-effort)", deviceID)
+			}
+		}
+		cli.Disconnect()
+	}
+	return m.keepSlotLogout(ctx, deviceID)
+}
+
+func (m *DeviceManager) resetDeviceKeepSlot(deviceID string) error {
+	inst, ok := m.GetDevice(deviceID)
+	if !ok || inst == nil {
+		return fmt.Errorf("device %s not found", deviceID)
+	}
+	inst.ResetClient()
+	if m.storage != nil && strings.TrimSpace(deviceID) != "" {
+		if err := m.storage.SaveDeviceRecord(&domainChatStorage.DeviceRecord{
+			DeviceID:    deviceID,
+			DisplayName: inst.DisplayName(),
+			JID:         "",
+			CreatedAt:   inst.CreatedAt(),
+			UpdatedAt:   time.Now(),
+		}); err != nil {
+			return fmt.Errorf("persist logged-out device %s: %w", deviceID, err)
+		}
+	}
+	return nil
+}
+
+func (m *DeviceManager) deleteStoreRowsForJID(ctx context.Context, jid string) error {
+	if m == nil {
+		return nil
+	}
+
+	jid = strings.TrimSpace(jid)
+	if jid == "" {
+		return nil
+	}
+
+	var target types.JID
+	parsed, err := types.ParseJID(jid)
+	if err == nil {
+		target = parsed.ToNonAD()
+	}
+
+	deleteFrom := func(container *sqlstore.Container) error {
+		if container == nil {
+			return nil
+		}
+
+		devices, err := container.GetAllDevices(ctx)
+		if err != nil {
+			return err
+		}
+
+		for _, dev := range devices {
+			if dev == nil || dev.ID == nil {
+				continue
+			}
+			deviceJID := dev.ID.ToNonAD()
+			if deviceJID.String() == jid || (!target.IsEmpty() && deviceJID.String() == target.String()) {
+				if err := container.DeleteDevice(ctx, dev); err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	}
+
+	if err := deleteFrom(m.store); err != nil {
+		return err
+	}
+	if m.keys != nil && m.keys != m.store {
+		if err := deleteFrom(m.keys); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *DeviceManager) keepSlotLogout(ctx context.Context, deviceID string) error {
+	if m == nil {
+		return fmt.Errorf("device manager is nil")
+	}
+
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return fmt.Errorf("device id is required")
+	}
+
+	slotID := deviceID
+	jid := deviceID
+	if inst, ok := m.GetDevice(deviceID); ok && inst != nil {
+		if strings.TrimSpace(inst.JID()) != "" {
+			jid = inst.JID()
+		}
+	} else if parsed, err := types.ParseJID(deviceID); err == nil {
+		target := parsed.ToNonAD().String()
+		m.mu.RLock()
+		for id, inst := range m.devices {
+			if inst == nil {
+				continue
+			}
+			if inst.JID() == target {
+				slotID = id
+				jid = inst.JID()
+				break
+			}
+			if instJID, err := types.ParseJID(inst.JID()); err == nil && instJID.ToNonAD().String() == target {
+				slotID = id
+				jid = inst.JID()
+				break
+			}
+		}
+		m.mu.RUnlock()
+	}
+
+	if parsed, err := types.ParseJID(jid); err == nil {
+		jid = parsed.ToNonAD().String()
+	}
+
+	if err := m.deleteStoreRowsForJID(ctx, jid); err != nil {
+		return err
+	}
+
+	return m.resetDeviceKeepSlot(slotID)
 }
 
 // CreateDevice registers a new device placeholder so routes can be scoped strictly by device_id.
@@ -545,7 +697,7 @@ func (m *DeviceManager) LoadExistingDevices(ctx context.Context) error {
 		var matchedDevice *DeviceInstance
 		var orphanDevice *DeviceInstance
 		for _, inst := range m.devices {
-			if inst.JID() == jid {
+			if sameJID(inst.JID(), jid) {
 				matchedDevice = inst
 				break
 			}
@@ -577,6 +729,8 @@ func (m *DeviceManager) LoadExistingDevices(ctx context.Context) error {
 
 		// Create new device instance
 		instance := NewDeviceInstance(jid, nil, newDeviceChatStorage(jid, m.storage))
+		instance.jid = jid
+		instance.displayName = dev.PushName
 		instance.SetState(domainDevice.DeviceStateDisconnected)
 		m.AddDevice(instance)
 	}
@@ -626,7 +780,7 @@ func (m *DeviceManager) loadFromRegistry(records []*domainChatStorage.DeviceReco
 		m.mu.RLock()
 		var existingByJID *DeviceInstance
 		for id, inst := range m.devices {
-			if rec.JID != "" && inst.JID() == rec.JID && id != rec.DeviceID {
+			if rec.JID != "" && sameJID(inst.JID(), rec.JID) && id != rec.DeviceID {
 				existingByJID = inst
 				break
 			}
@@ -692,7 +846,7 @@ func (m *DeviceManager) EnsureDefault(client *DeviceInstance) {
 	clientJID := client.JID()
 	if clientJID != "" {
 		for _, inst := range m.devices {
-			if inst.JID() == clientJID {
+			if sameJID(inst.JID(), clientJID) {
 				// Update existing device with the new client
 				inst.SetClient(client.GetClient())
 				return
@@ -799,7 +953,7 @@ func (m *DeviceManager) ensureInstance(deviceID string) *DeviceInstance {
 
 	// Check if any existing device has this as its JID (deviceID might be a JID)
 	for _, inst := range m.devices {
-		if inst.JID() == deviceID {
+		if sameJID(inst.JID(), deviceID) {
 			if inst.GetChatStorage() == nil {
 				storageDeviceID := inst.JID()
 				if storageDeviceID == "" {
@@ -826,6 +980,14 @@ func (m *DeviceManager) getOrCreateStoreDevice(ctx context.Context, deviceID str
 		if jid, err := types.ParseJID(deviceID); err == nil {
 			if dev, err := m.store.GetDevice(ctx, jid); err == nil && dev != nil {
 				return dev, nil
+			}
+			if allDevices, err := m.store.GetAllDevices(ctx); err == nil {
+				target := jid.ToNonAD().String()
+				for _, d := range allDevices {
+					if d != nil && d.ID != nil && d.ID.ToNonAD().String() == target {
+						return d, nil
+					}
+				}
 			}
 		}
 
@@ -865,7 +1027,7 @@ func (m *DeviceManager) configureKeysStore(ctx context.Context, device *store.De
 	}
 
 	innerStore := sqlstore.NewSQLStore(m.keys, *device.ID)
-	syncKeysDevice(ctx, m.store, m.keys)
+	syncKeysDevice(ctx, m.store, m.keys, *device.ID)
 
 	device.Identities = innerStore
 	device.Sessions = innerStore
@@ -888,4 +1050,12 @@ func (m *DeviceManager) StoreInfo() (dbURI, keysURI string) {
 		return "", ""
 	}
 	return config.DBURI, config.DBKeysURI
+}
+
+// GetStorage returns the chat storage repository.
+func (m *DeviceManager) GetStorage() domainChatStorage.IChatStorageRepository {
+	if m == nil {
+		return nil
+	}
+	return m.storage
 }
