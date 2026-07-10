@@ -3,6 +3,7 @@ package rest
 import (
 	"strings"
 
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/domains/device"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/gofiber/fiber/v2"
@@ -58,7 +59,11 @@ func (handler *Device) GetDevice(c *fiber.Ctx) error {
 
 func (handler *Device) AddDevice(c *fiber.Ctx) error {
 	var req struct {
-		DeviceID string `json:"device_id"`
+		DeviceID                  string `json:"device_id"`
+		WebhookURL                string `json:"webhook_url"`
+		WebhookSecret             string `json:"webhook_secret"`
+		WebhookEvents             string `json:"webhook_events"`
+		WebhookInsecureSkipVerify bool   `json:"webhook_insecure_skip_verify"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
@@ -70,7 +75,21 @@ func (handler *Device) AddDevice(c *fiber.Ctx) error {
 		})
 	}
 
-	device, err := handler.Service.AddDevice(c.UserContext(), req.DeviceID)
+	var webhook *chatstorage.DeviceWebhookConfig
+	if strings.TrimSpace(req.WebhookURL) != "" ||
+		strings.TrimSpace(req.WebhookSecret) != "" ||
+		strings.TrimSpace(req.WebhookEvents) != "" ||
+		req.WebhookInsecureSkipVerify {
+		webhookURL := strings.TrimSpace(req.WebhookURL)
+		webhook = &chatstorage.DeviceWebhookConfig{
+			WebhookURL:                &webhookURL,
+			WebhookSecret:             strings.TrimSpace(req.WebhookSecret),
+			WebhookEvents:             strings.TrimSpace(req.WebhookEvents),
+			WebhookInsecureSkipVerify: req.WebhookInsecureSkipVerify,
+		}
+	}
+
+	device, err := handler.Service.AddDevice(c.UserContext(), req.DeviceID, webhook)
 	utils.PanicIfNeeded(err)
 
 	result := map[string]any{
