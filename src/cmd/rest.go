@@ -250,7 +250,7 @@ func restServer(_ *cobra.Command, _ []string) {
 	// Chatwoot webhook - registered before optional app basic auth, but guarded
 	// by a dedicated shared secret so it cannot be used as a public send proxy.
 	if config.ChatwootEnabled {
-		chatwootHandler := rest.NewChatwootHandler(appUsecase, sendUsecase, dm, chatStorageRepo)
+		chatwootHandler := rest.NewChatwootHandler(appUsecase, sendUsecase, messageUsecase, dm, chatStorageRepo)
 		webhookPath := "/chatwoot/webhook"
 		if config.AppBasePath != "" {
 			webhookPath = config.AppBasePath + webhookPath
@@ -336,7 +336,7 @@ func restServer(_ *cobra.Command, _ []string) {
 
 	// Chatwoot sync routes - require authentication (webhook is registered earlier without auth)
 	if config.ChatwootEnabled {
-		chatwootHandler := rest.NewChatwootHandler(appUsecase, sendUsecase, dm, chatStorageRepo)
+		chatwootHandler := rest.NewChatwootHandler(appUsecase, sendUsecase, messageUsecase, dm, chatStorageRepo)
 		apiGroup.Post("/chatwoot/sync", chatwootHandler.SyncHistory)
 		apiGroup.Get("/chatwoot/sync/status", chatwootHandler.SyncStatus)
 	}

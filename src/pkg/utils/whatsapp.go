@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"mime"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
@@ -39,6 +41,70 @@ func init() {
 	knownDocumentExtensionByMIME = make(map[string]string, len(knownDocumentMIMEByExtension))
 	for ext, mimeType := range knownDocumentMIMEByExtension {
 		knownDocumentExtensionByMIME[strings.ToLower(mimeType)] = ext
+	}
+}
+
+func ExtractPhoneFromVCard(vcard string) string {
+	if vcard == "" {
+		return ""
+	}
+
+	normalized := strings.ReplaceAll(vcard, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+
+	var lines []string
+	var current strings.Builder
+	for _, rawLine := range strings.Split(normalized, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(rawLine, " ") || strings.HasPrefix(rawLine, "\t") {
+			if current.Len() > 0 {
+				current.WriteString(line)
+			}
+			continue
+		}
+		if current.Len() > 0 {
+			lines = append(lines, current.String())
+			current.Reset()
+		}
+		current.WriteString(line)
+	}
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(line), "TEL") {
+			if idx := strings.LastIndex(line, ":"); idx >= 0 {
+				return strings.TrimSpace(line[idx+1:])
+			}
+		}
+	}
+	return ""
+}
+
+// FormatContactSummary builds a one-liner for a shared contact card.
+// Pass plural=true for ContactsArrayMessage to use the "Contacts" prefix.
+func FormatContactSummary(name, phone string, plural bool) string {
+	name = strings.TrimSpace(name)
+	phone = strings.TrimSpace(phone)
+
+	prefix := "Contact"
+	if plural {
+		prefix = "Contacts"
+	}
+	switch {
+	case name != "" && phone != "":
+		return fmt.Sprintf("%s: %s (%s)", prefix, name, phone)
+	case name != "":
+		return prefix + ": " + name
+	case phone != "":
+		return prefix + ": " + phone
+	default:
+		return prefix + " shared"
 	}
 }
 
@@ -310,6 +376,195 @@ func ExtractMediaInfo(msg *waE2E.Message) (mediaType string, filename string, ur
 	}
 
 	return "", "", "", "", nil, nil, nil, 0
+}
+
+// ResolveMediaDirectPath returns storedDirectPath, or derives a direct path
+// from legacy rows that only persisted the full WhatsApp media URL.
+func ResolveMediaDirectPath(storedDirectPath, mediaURL string) string {
+	storedDirectPath = strings.TrimSpace(storedDirectPath)
+	if storedDirectPath != "" {
+		return storedDirectPath
+	}
+
+	mediaURL = strings.TrimSpace(mediaURL)
+	if mediaURL == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(mediaURL)
+	if err != nil {
+		return ""
+	}
+	requestURI := parsed.RequestURI()
+	if strings.HasPrefix(requestURI, "/") {
+		return requestURI
+	}
+	return ""
+}
+
+// BuildDownloadableMessage reconstructs a whatsmeow downloadable media proto
+// from stored chat media metadata.
+func BuildDownloadableMessage(mediaType, mediaURL, directPath, filename string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) (whatsmeow.DownloadableMessage, error) {
+	resolvedDirectPath := ResolveMediaDirectPath(directPath, mediaURL)
+
+	switch mediaType {
+	case "image":
+		return &waE2E.ImageMessage{
+			URL:           proto.String(mediaURL),
+			DirectPath:    proto.String(resolvedDirectPath),
+			MediaKey:      mediaKey,
+			FileSHA256:    fileSHA256,
+			FileEncSHA256: fileEncSHA256,
+			FileLength:    proto.Uint64(fileLength),
+		}, nil
+	case "video", "video_note":
+		return &waE2E.VideoMessage{
+			URL:           proto.String(mediaURL),
+			DirectPath:    proto.String(resolvedDirectPath),
+			MediaKey:      mediaKey,
+			FileSHA256:    fileSHA256,
+			FileEncSHA256: fileEncSHA256,
+			FileLength:    proto.Uint64(fileLength),
+		}, nil
+	case "audio", "ptt":
+		return &waE2E.AudioMessage{
+			URL:           proto.String(mediaURL),
+			DirectPath:    proto.String(resolvedDirectPath),
+			MediaKey:      mediaKey,
+			FileSHA256:    fileSHA256,
+			FileEncSHA256: fileEncSHA256,
+			FileLength:    proto.Uint64(fileLength),
+		}, nil
+	case "document":
+		return &waE2E.DocumentMessage{
+			URL:           proto.String(mediaURL),
+			DirectPath:    proto.String(resolvedDirectPath),
+			MediaKey:      mediaKey,
+			FileSHA256:    fileSHA256,
+			FileEncSHA256: fileEncSHA256,
+			FileLength:    proto.Uint64(fileLength),
+			FileName:      proto.String(filename),
+		}, nil
+	case "sticker":
+		return &waE2E.StickerMessage{
+			URL:           proto.String(mediaURL),
+			DirectPath:    proto.String(resolvedDirectPath),
+			MediaKey:      mediaKey,
+			FileSHA256:    fileSHA256,
+			FileEncSHA256: fileEncSHA256,
+			FileLength:    proto.Uint64(fileLength),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported media type: %s", mediaType)
+	}
+}
+
+// ExtractContextInfo returns the ContextInfo from whichever message sub-type
+// is present. Returns nil when the message has no ContextInfo.
+func ExtractContextInfo(msg *waE2E.Message) *waE2E.ContextInfo {
+	if msg == nil {
+		return nil
+	}
+	switch {
+	case msg.GetExtendedTextMessage() != nil:
+		return msg.GetExtendedTextMessage().GetContextInfo()
+	case msg.GetImageMessage() != nil:
+		return msg.GetImageMessage().GetContextInfo()
+	case msg.GetVideoMessage() != nil:
+		return msg.GetVideoMessage().GetContextInfo()
+	case msg.GetAudioMessage() != nil:
+		return msg.GetAudioMessage().GetContextInfo()
+	case msg.GetDocumentMessage() != nil:
+		return msg.GetDocumentMessage().GetContextInfo()
+	case msg.GetStickerMessage() != nil:
+		return msg.GetStickerMessage().GetContextInfo()
+	case msg.GetContactMessage() != nil:
+		return msg.GetContactMessage().GetContextInfo()
+	case msg.GetLocationMessage() != nil:
+		return msg.GetLocationMessage().GetContextInfo()
+	case msg.GetPtvMessage() != nil:
+		return msg.GetPtvMessage().GetContextInfo()
+	case msg.GetLiveLocationMessage() != nil:
+		return msg.GetLiveLocationMessage().GetContextInfo()
+	}
+	return nil
+}
+
+func ExtractExternalAdReply(msg *waE2E.Message) map[string]any {
+	if msg == nil {
+		return nil
+	}
+
+	ci := ExtractContextInfo(UnwrapMessage(msg))
+	if ci == nil {
+		return nil
+	}
+
+	ad := ci.GetExternalAdReply()
+	if ad == nil {
+		return nil
+	}
+
+	referral := make(map[string]any)
+	if v := ad.GetCtwaClid(); v != "" {
+		referral["ctwa_clid"] = v
+	}
+	if v := ad.GetSourceURL(); v != "" {
+		referral["source_url"] = v
+	}
+	if v := ad.GetSourceID(); v != "" {
+		referral["source_id"] = v
+	}
+	if v := ad.GetRef(); v != "" {
+		referral["ref"] = v
+	}
+	if v := ad.GetSourceApp(); v != "" {
+		referral["source_app"] = v
+	}
+	if v := ad.GetTitle(); v != "" {
+		referral["ad_title"] = v
+	}
+	if v := ad.GetBody(); v != "" {
+		referral["ad_body"] = v
+	}
+	if v := ad.GetThumbnailURL(); v != "" {
+		referral["thumbnail_url"] = v
+	}
+	if v := ad.GetOriginalImageURL(); v != "" {
+		referral["original_image_url"] = v
+	}
+	if v := ad.GetMediaURL(); v != "" {
+		referral["media_url"] = v
+	}
+	if ad.MediaType != nil {
+		referral["media_type"] = ad.GetMediaType().String()
+	}
+	if ad.ShowAdAttribution != nil {
+		referral["show_ad_attribution"] = ad.GetShowAdAttribution()
+	}
+	if ad.ContainsAutoReply != nil {
+		referral["contains_auto_reply"] = ad.GetContainsAutoReply()
+	}
+	if ad.AutomatedGreetingMessageShown != nil {
+		referral["automated_greeting_message_shown"] = ad.GetAutomatedGreetingMessageShown()
+	}
+	if v := ad.GetGreetingMessageBody(); v != "" {
+		referral["greeting_message_body"] = v
+	}
+	if ad.ClickToWhatsappCall != nil {
+		referral["click_to_whatsapp_call"] = ad.GetClickToWhatsappCall()
+	}
+	if v := ad.GetSourceType(); v != "" {
+		referral["source_type"] = v
+	}
+	if ad.AdType != nil {
+		referral["ad_type"] = ad.GetAdType().String()
+	}
+
+	if len(referral) == 0 {
+		return nil
+	}
+	return referral
 }
 
 // ExtractEphemeralExpiration extracts ephemeral expiration from a WhatsApp message

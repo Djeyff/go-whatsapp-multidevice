@@ -36,7 +36,14 @@ func handler(ctx context.Context, instance *DeviceInstance, rawEvt any) {
 	case *events.AppStateSyncComplete:
 		handleAppStateSyncComplete(ctx, client, evt)
 	case *events.PairSuccess:
+		instance.ClearPasskeyState()
 		handlePairSuccess(ctx, evt)
+	case *events.PairPasskeyRequest:
+		handlePairPasskeyRequest(ctx, instance, evt)
+	case *events.PairPasskeyConfirmation:
+		handlePairPasskeyConfirmation(ctx, instance, evt)
+	case *events.PairPasskeyError:
+		handlePairPasskeyError(ctx, instance, evt)
 	case *events.LoggedOut:
 		handleLoggedOut(ctx, instance, chatStorageRepo)
 	case *events.Connected, *events.PushNameSetting:
@@ -56,7 +63,7 @@ func handler(ctx context.Context, instance *DeviceInstance, rawEvt any) {
 	case *events.HistorySync:
 		handleHistorySync(ctx, evt, chatStorageRepo, client)
 	case *events.AppState:
-		handleAppState(ctx, evt)
+		handleAppState(ctx, evt, instance.JID(), client)
 	case *events.GroupInfo:
 		handleGroupInfo(ctx, evt, instance.JID(), client)
 	case *events.JoinedGroup:
@@ -154,6 +161,46 @@ func handlePairSuccess(ctx context.Context, evt *events.PairSuccess) {
 	syncKeysDevice(ctx, primaryDB, secondaryDB)
 }
 
+func handlePairPasskeyRequest(_ context.Context, instance *DeviceInstance, evt *events.PairPasskeyRequest) {
+	if instance != nil {
+		instance.SetPasskeyChallenge(evt.PublicKey)
+	}
+	websocket.Broadcast <- websocket.BroadcastMessage{
+		Code:    "PASSKEY_REQUEST",
+		Message: "Passkey pairing request received",
+		Result:  evt.PublicKey,
+	}
+}
+
+func handlePairPasskeyConfirmation(_ context.Context, instance *DeviceInstance, evt *events.PairPasskeyConfirmation) {
+	if instance != nil {
+		instance.SetPasskeyConfirmation(evt.Code, evt.SkipHandoffUX)
+	}
+	websocket.Broadcast <- websocket.BroadcastMessage{
+		Code:    "PASSKEY_CONFIRMATION",
+		Message: "Passkey pairing confirmation received",
+		Result: map[string]any{
+			"code":             evt.Code,
+			"skip_handoff_ux":  evt.SkipHandoffUX,
+			"skip_handoff_ux?": evt.SkipHandoffUX,
+		},
+	}
+}
+
+func handlePairPasskeyError(_ context.Context, instance *DeviceInstance, evt *events.PairPasskeyError) {
+	if instance != nil {
+		instance.ClearPasskeyState()
+	}
+	message := "Passkey pairing failed"
+	if evt != nil && evt.Error != nil {
+		message = evt.Error.Error()
+	}
+	websocket.Broadcast <- websocket.BroadcastMessage{
+		Code:    "PASSKEY_ERROR",
+		Message: message,
+	}
+}
+
 func handleLoggedOut(ctx context.Context, instance *DeviceInstance, chatStorageRepo domainChatStorage.IChatStorageRepository) {
 	logrus.Warnf("[REMOTE_LOGOUT] Received LoggedOut event for device %s - user logged out from phone", instance.ID())
 
@@ -245,8 +292,36 @@ func handlePresence(_ context.Context, evt *events.Presence) {
 	}
 }
 
-func handleAppState(_ context.Context, evt *events.AppState) {
+func handleAppState(ctx context.Context, evt *events.AppState, args ...any) {
 	log.Debugf("App state event: %+v / %+v", evt.Index, evt.SyncActionValue)
+	if !isLabelAppState(evt) {
+		return
+	}
+
+	var deviceID string
+	var client *whatsmeow.Client
+	if len(args) > 0 {
+		if value, ok := args[0].(string); ok {
+			deviceID = value
+		}
+	}
+	if len(args) > 1 {
+		if value, ok := args[1].(*whatsmeow.Client); ok {
+			client = value
+		}
+	}
+
+	if len(config.WhatsappWebhook) == 0 && strings.TrimSpace(deviceID) == "" {
+		return
+	}
+
+	go func() {
+		webhookCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := forwardLabelAppStateToWebhook(webhookCtx, evt, deviceID, client); err != nil {
+			logrus.Errorf("Failed to forward label app state event to webhook: %v", err)
+		}
+	}()
 }
 
 func handleGroupInfo(ctx context.Context, evt *events.GroupInfo, deviceID string, client *whatsmeow.Client) {
