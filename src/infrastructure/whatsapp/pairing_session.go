@@ -173,26 +173,25 @@ func (s *PairingSession) WaitReady(ctx context.Context) error {
 	}
 	select {
 	case <-s.ready:
-		snapshot := s.Snapshot()
-		if snapshot.Generation > 0 {
-			return nil
-		}
+		return pairingSessionReadiness(s.Snapshot())
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.ctx.Done():
+		return pairingSessionReadiness(s.Snapshot())
+	}
+}
+
+func pairingSessionReadiness(snapshot PairingSessionSnapshot) error {
+	if isTerminalPairingSessionState(snapshot.State) {
 		if snapshot.ErrorCode != "" {
 			return fmt.Errorf("pairing session %s: %s", snapshot.State, snapshot.ErrorCode)
 		}
 		return fmt.Errorf("pairing session %s before QR readiness", snapshot.State)
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-s.ctx.Done():
-		snapshot := s.Snapshot()
-		if snapshot.Generation > 0 {
-			return nil
-		}
-		if snapshot.ErrorCode != "" {
-			return fmt.Errorf("pairing session %s: %s", snapshot.State, snapshot.ErrorCode)
-		}
-		return fmt.Errorf("pairing session ended before QR readiness")
 	}
+	if snapshot.Generation > 0 {
+		return nil
+	}
+	return fmt.Errorf("pairing session %s before QR readiness", snapshot.State)
 }
 
 func (s *PairingSession) MarkTerminal(state PairingSessionState, errorCode string, terminalAt time.Time) PairingSessionSnapshot {
@@ -233,7 +232,7 @@ func (s *PairingSession) CanReplace() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	switch s.state {
-	case PairingSessionExpired, PairingSessionFailed, PairingSessionCanceled:
+	case PairingSessionPaired, PairingSessionExpired, PairingSessionFailed, PairingSessionCanceled:
 		return true
 	default:
 		return false

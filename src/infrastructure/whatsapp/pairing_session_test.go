@@ -101,12 +101,42 @@ func TestTerminalPairingSessionCanBeReplaced(t *testing.T) {
 	}
 }
 
+func TestPairedSessionCanBeReplacedAfterClientDisconnects(t *testing.T) {
+	instance := NewDeviceInstance("device-1", nil, nil)
+	first, _ := instance.GetOrCreatePairingSession(func() *PairingSession {
+		return NewPairingSession(context.Background(), "pairing-session-1")
+	})
+	first.PublishQR("qr-image", time.Now(), 60*time.Second)
+	first.MarkTerminal(PairingSessionPaired, "", time.Now())
+
+	second, created := instance.GetOrCreatePairingSession(func() *PairingSession {
+		return NewPairingSession(context.Background(), "pairing-session-2")
+	})
+
+	if !created {
+		t.Fatal("paired session was reused after a later disconnect")
+	}
+	if first == second || second.ID() != "pairing-session-2" {
+		t.Fatal("fresh pairing session was not installed")
+	}
+}
+
 func TestPairingSessionTerminalStateUnblocksReadinessWait(t *testing.T) {
 	session := NewPairingSession(context.Background(), "pairing-session-1")
 	session.MarkTerminal(PairingSessionFailed, "connect_failed", time.Now())
 
 	if err := session.WaitReady(context.Background()); err == nil {
 		t.Fatal("WaitReady returned nil after the session failed")
+	}
+}
+
+func TestPairingSessionWaitReadyRejectsExpiredGeneration(t *testing.T) {
+	session := NewPairingSession(context.Background(), "pairing-session-1")
+	session.PublishQR("qr-image", time.Now().Add(-time.Minute), 20*time.Second)
+	session.MarkTerminal(PairingSessionExpired, "qr_window_expired", time.Now())
+
+	if err := session.WaitReady(context.Background()); err == nil {
+		t.Fatal("WaitReady returned stale success after the QR session expired")
 	}
 }
 
