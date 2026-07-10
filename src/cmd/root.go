@@ -263,7 +263,7 @@ func initFlags() {
 		&config.AppOs,
 		"os", "",
 		config.AppOs,
-		`os name --os <string> | example: --os="Chrome"`,
+		`os name --os <string> | example: --os="Retena"`,
 	)
 	rootCmd.PersistentFlags().StringSliceVarP(
 		&config.AppBasicAuthCredential,

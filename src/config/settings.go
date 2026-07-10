@@ -9,7 +9,7 @@ var (
 	AppPort                                 = "3000"
 	AppHost                                 = "0.0.0.0"
 	AppDebug                                = false
-	AppOs                                   = "GOWA"
+	AppOs                                   = "Retena"
 	AppPlatform                             = waCompanionReg.DeviceProps_PlatformType(1)
 	AppBasicAuthCredential                  []string
 	AppBasePath                             = ""
