@@ -27,10 +27,111 @@ type serviceApp struct {
 	deviceManager   *whatsapp.DeviceManager
 }
 
+func pairPhoneAfterReadiness(ctx context.Context, session *whatsapp.PairingSession, pair func(context.Context) (string, error)) (string, error) {
+	if session == nil {
+		return "", fmt.Errorf("pairing session is unavailable")
+	}
+	if pair == nil {
+		return "", fmt.Errorf("phone pairing provider is unavailable")
+	}
+	if err := session.WaitReady(ctx); err != nil {
+		return "", err
+	}
+	if !session.BeginPhonePairing() {
+		return "", fmt.Errorf("phone pairing is already in progress or unavailable")
+	}
+	defer session.EndPhonePairing()
+	return pair(ctx)
+}
+
 func NewAppService(chatStorageRepo domainChatStorage.IChatStorageRepository, deviceManager *whatsapp.DeviceManager) domainApp.IAppUsecase {
 	return &serviceApp{
 		chatStorageRepo: chatStorageRepo,
 		deviceManager:   deviceManager,
+	}
+}
+
+func (service *serviceApp) getOrStartPairingSession(instance *whatsapp.DeviceInstance, client *whatsmeow.Client) (*whatsapp.PairingSession, error) {
+	session, created := instance.GetOrCreatePairingSession(func() *whatsapp.PairingSession {
+		return whatsapp.NewPairingSession(context.Background(), fiberUtils.UUIDv4())
+	})
+	if session == nil {
+		return nil, fmt.Errorf("pairing session is unavailable")
+	}
+	if !created {
+		return session, nil
+	}
+
+	if client.IsConnected() {
+		client.Disconnect()
+	}
+	instance.ClearPasskeyState()
+
+	events, err := client.GetQRChannel(session.Context())
+	if err != nil {
+		session.MarkTerminal(whatsapp.PairingSessionFailed, classifyQRChannelStartError(err), time.Now())
+		if errors.Is(err, whatsmeow.ErrQRStoreContainsID) {
+			_ = client.Connect()
+			instance.UpdateStateFromClient()
+			if client.IsLoggedIn() {
+				return session, pkgError.ErrAlreadyLoggedIn
+			}
+			return session, pkgError.ErrSessionSaved
+		}
+		return session, pkgError.ErrQrChannel
+	}
+
+	go whatsapp.ConsumePairingQRChannel(session, events, whatsapp.PairingQRConsumer{
+		WriteImage: func(code string) (string, error) {
+			path := fmt.Sprintf("%s/scan-qr-%s.png", config.PathQrCode, fiberUtils.UUIDv4())
+			if err := pkgUtils.WriteQRWithLogo(code, 512, path); err != nil {
+				return "", err
+			}
+			return path, nil
+		},
+		RemoveImageAfter: func(path string, after time.Duration) {
+			time.AfterFunc(after+30*time.Second, func() {
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					logrus.Warnf("[LOGIN] failed to remove expired QR image")
+				}
+			})
+		},
+	})
+
+	if err := client.Connect(); err != nil {
+		session.MarkTerminal(whatsapp.PairingSessionFailed, "connect_failed", time.Now())
+		logger.Error("Error when connect to whatsapp", err)
+		return session, pkgError.ErrReconnect
+	}
+	instance.UpdateStateFromClient()
+	return session, nil
+}
+
+func classifyQRChannelStartError(err error) string {
+	switch {
+	case errors.Is(err, whatsmeow.ErrQRAlreadyConnected):
+		return "qr_already_connected"
+	case errors.Is(err, whatsmeow.ErrQRStoreContainsID):
+		return "session_already_saved"
+	default:
+		return "qr_channel_start_failed"
+	}
+}
+
+func loginResponseFromPairingSnapshot(snapshot whatsapp.PairingSessionSnapshot, now time.Time) domainApp.LoginResponse {
+	remaining := snapshot.ValidUntil.Sub(now)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return domainApp.LoginResponse{
+		ImagePath:        snapshot.ImagePath,
+		Duration:         time.Duration(remaining / time.Second),
+		PairingSessionID: snapshot.SessionID,
+		QRGeneration:     snapshot.Generation,
+		EmittedAt:        snapshot.EmittedAt,
+		ValidUntil:       snapshot.ValidUntil,
+		State:            string(snapshot.State),
+		ErrorCode:        snapshot.ErrorCode,
 	}
 }
 
@@ -45,88 +146,14 @@ func (service *serviceApp) Login(ctx context.Context, deviceID string) (response
 		return response, pkgError.ErrAlreadyLoggedIn
 	}
 
-	// Disconnect first to ensure QR flow starts cleanly.
-	client.Disconnect()
-	instance.ClearPasskeyState()
-
-	// Use a detached context for the QR channel so the pairing session
-	// survives after the HTTP response is sent. The HTTP request context
-	// has a short timeout (e.g. 45s) which would cancel the QR emitter
-	// and disconnect the client before the user can scan the code.
-	// Total QR window: ~160s (first code 60s + five codes at 20s each).
-	qrCtx, qrCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-
-	chImage := make(chan string, 1) // Buffered to prevent goroutine leak
-	ch, err := client.GetQRChannel(qrCtx)
+	session, err := service.getOrStartPairingSession(instance, client)
 	if err != nil {
-		qrCancel()
-		logrus.Errorf("[LOGIN][%s] GetQRChannel failed: %v", deviceID, err)
-		if errors.Is(err, whatsmeow.ErrQRStoreContainsID) {
-			_ = client.Connect()
-			instance.UpdateStateFromClient()
-			if client.IsLoggedIn() {
-				return response, pkgError.ErrAlreadyLoggedIn
-			}
-			return response, pkgError.ErrSessionSaved
-		}
-		return response, pkgError.ErrQrChannel
+		return response, err
 	}
-
-	go func() {
-		defer qrCancel()
-		defer close(chImage) // Ensure channel is closed when done
-		for evt := range ch {
-			response.Code = evt.Code
-			response.Duration = evt.Timeout / time.Second / 2
-			if evt.Event == "code" {
-				qrPath := fmt.Sprintf("%s/scan-qr-%s.png", config.PathQrCode, fiberUtils.UUIDv4())
-				if err := pkgUtils.WriteQRWithLogo(evt.Code, 512, qrPath); err != nil {
-					logrus.Errorf("[LOGIN][%s] Error when write qr code to file: %v", deviceID, err)
-					continue // Skip sending if QR generation failed
-				}
-				go func(path string, duration time.Duration) {
-					time.Sleep(duration * time.Second)
-					if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-						logrus.Errorf("[LOGIN][%s] error when remove qrImage file: %v", deviceID, err)
-					}
-				}(qrPath, response.Duration)
-				select {
-				case chImage <- qrPath:
-				case <-qrCtx.Done():
-					logrus.Warnf("[LOGIN][%s] QR context canceled while sending QR path", deviceID)
-					return
-				}
-			} else if evt.Event == whatsmeow.QRChannelEventPasskeyRequest || evt.Event == whatsmeow.QRChannelEventPasskeyResponse {
-				// Passkey events are broadcast by the global event handler and served via /app/passkey endpoints.
-				logrus.Infof("[LOGIN][%s] passkey pairing event: %s", deviceID, evt.Event)
-			} else {
-				logrus.Errorf("[LOGIN][%s] error when get qrCode %s %v", deviceID, evt.Event, evt.Error)
-			}
-		}
-	}()
-
-	if err = client.Connect(); err != nil {
-		qrCancel()
-		logger.Error("Error when connect to whatsapp", err)
-		return response, pkgError.ErrReconnect
+	if err := session.WaitReady(ctx); err != nil {
+		return loginResponseFromPairingSnapshot(session.Snapshot(), time.Now()), err
 	}
-
-	instance.UpdateStateFromClient()
-
-	// Wait for QR image with timeout to prevent hanging
-	select {
-	case imagePath, ok := <-chImage:
-		if !ok {
-			return response, fmt.Errorf("QR channel closed without receiving image")
-		}
-		response.ImagePath = imagePath
-	case <-ctx.Done():
-		return response, ctx.Err()
-	case <-time.After(120 * time.Second):
-		return response, fmt.Errorf("timeout waiting for QR code")
-	}
-
-	return response, nil
+	return loginResponseFromPairingSnapshot(session.Snapshot(), time.Now()), nil
 }
 
 func (service *serviceApp) LoginWithCode(ctx context.Context, deviceID string, phoneNumber string) (loginCode string, err error) {
@@ -145,22 +172,22 @@ func (service *serviceApp) LoginWithCode(ctx context.Context, deviceID string, p
 		return loginCode, pkgError.ErrAlreadyLoggedIn
 	}
 
-	// Connect before requesting pairing code.
-	if !client.IsConnected() {
-		if err = client.Connect(); err != nil {
-			return loginCode, err
-		}
+	session, err := service.getOrStartPairingSession(instance, client)
+	if err != nil {
+		return loginCode, err
 	}
 
-	logrus.Infof("[LOGIN_CODE][%s] Starting phone pairing for number: %s", deviceID, phoneNumber)
-	loginCode, err = client.PairPhone(ctx, phoneNumber, true, whatsmeow.PairClientChrome, config.AppOs)
+	logrus.Infof("[LOGIN_CODE][%s] Starting phone pairing after QR readiness", deviceID)
+	loginCode, err = pairPhoneAfterReadiness(ctx, session, func(pairCtx context.Context) (string, error) {
+		return client.PairPhone(pairCtx, phoneNumber, true, whatsmeow.PairClientOtherWebClient, "Chrome (Linux)")
+	})
 	if err != nil {
-		logrus.Errorf("Error when pairing phone: %s", err.Error())
+		logrus.Warnf("[LOGIN_CODE][%s] phone pairing failed", deviceID)
 		return loginCode, err
 	}
 
 	instance.UpdateStateFromClient()
-	logrus.Infof("Successfully paired phone with code: %s", loginCode)
+	logrus.Infof("[LOGIN_CODE][%s] phone pairing code generated", deviceID)
 	return loginCode, nil
 }
 

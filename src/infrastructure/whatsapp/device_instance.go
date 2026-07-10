@@ -28,6 +28,7 @@ type DeviceInstance struct {
 	passkeyChallenge     *types.WebAuthnPublicKey
 	passkeyCode          string
 	passkeySkipHandoffUX bool
+	pairingSession       *PairingSession
 }
 
 func NewDeviceInstance(deviceID string, client *whatsmeow.Client, chatStorageRepo domainChatStorage.IChatStorageRepository) *DeviceInstance {
@@ -132,10 +133,47 @@ func (d *DeviceInstance) SetClient(client *whatsmeow.Client) {
 func (d *DeviceInstance) ResetClient() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.pairingSession != nil && !d.pairingSession.IsTerminal() {
+		d.pairingSession.MarkTerminal(PairingSessionCanceled, "client_reset", time.Now())
+	}
+	d.pairingSession = nil
 	d.client = nil
 	d.jid = ""
 	d.phoneNumber = ""
 	d.state = domainDevice.DeviceStateDisconnected
+}
+
+func (d *DeviceInstance) GetOrCreatePairingSession(factory func() *PairingSession) (*PairingSession, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.pairingSession != nil && !d.pairingSession.CanReplace() {
+		return d.pairingSession, false
+	}
+	if factory == nil {
+		return nil, false
+	}
+	d.pairingSession = factory()
+	return d.pairingSession, d.pairingSession != nil
+}
+
+func (d *DeviceInstance) PairingSession() *PairingSession {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.pairingSession
+}
+
+func (d *DeviceInstance) ReleasePairingSession(sessionID string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.pairingSession == nil || d.pairingSession.ID() != sessionID {
+		return false
+	}
+	if !d.pairingSession.IsTerminal() {
+		d.pairingSession.MarkTerminal(PairingSessionCanceled, "released", time.Now())
+	}
+	d.pairingSession = nil
+	return true
 }
 
 // SetChatStorage swaps the chat storage repository for this device.

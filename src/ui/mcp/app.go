@@ -82,12 +82,14 @@ func (h *AppHandler) handleLoginWithQR(ctx context.Context, _ mcp.CallToolReques
 		return nil, err
 	}
 
-	fallback := fmt.Sprintf("Scan the QR image to log in (expires in ~%d seconds)", int(resp.Duration.Seconds()))
+	fallback := fmt.Sprintf("Scan the QR image to log in (expires in ~%d seconds)", int(resp.Duration))
 	structured := map[string]any{
-		"device_id":     deviceID,
-		"qr_image_path": resp.ImagePath,
-		"qr_code":       resp.Code,
-		"expires_in":    int(resp.Duration.Seconds()),
+		"device_id":          deviceID,
+		"qr_image_path":      resp.ImagePath,
+		"pairing_session_id": resp.PairingSessionID,
+		"qr_generation":      resp.QRGeneration,
+		"valid_until":        resp.ValidUntil,
+		"expires_in":         int(resp.Duration),
 	}
 
 	qrBytes, readErr := os.ReadFile(resp.ImagePath)

@@ -9,7 +9,51 @@ import (
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/gofiber/fiber/v2"
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 )
+
+func TestPassiveSafetyStatusRedactsAndClassifies(t *testing.T) {
+	previousOS := config.AppOs
+	previousPlatform := config.AppPlatform
+	previousPassive := config.RetenaPassiveListenerMode
+	t.Cleanup(func() {
+		config.AppOs = previousOS
+		config.AppPlatform = previousPlatform
+		config.RetenaPassiveListenerMode = previousPassive
+	})
+	config.AppOs = "Retena"
+	config.AppPlatform = waCompanionReg.DeviceProps_DESKTOP
+	config.RetenaPassiveListenerMode = true
+
+	t.Setenv("COMMIT_SHA", "candidate-sha")
+	payload := passiveSafetyStatus()
+	for key, want := range map[string]any{
+		"app_os":       "Retena",
+		"app_platform": "DESKTOP",
+		"commit":       "candidate-sha",
+		"passive_mode": true,
+	} {
+		if got := payload[key]; got != want {
+			t.Fatalf("%s = %#v, want %#v", key, got, want)
+		}
+	}
+	if payload["session_event_webhook_secret_value_exposed"] != false {
+		t.Fatal("passive safety status must never expose an internal webhook secret value")
+	}
+	for _, key := range []string{
+		"presence_heartbeat",
+		"presence_available_heartbeat",
+		"auto_reply_enabled",
+		"auto_mark_read",
+		"auto_download_media",
+		"auto_reject_call",
+		"presence_on_connect",
+	} {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("passive safety payload missing %s", key)
+		}
+	}
+}
 
 func TestPassiveListenerGuardPresenceHeartbeatException(t *testing.T) {
 	prevPassive := config.RetenaPassiveListenerMode

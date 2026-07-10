@@ -38,6 +38,36 @@ func passivePresenceHeartbeatPath() string {
 	return base + "/send/presence"
 }
 
+func passiveSafetyStatus() fiber.Map {
+	commit := firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown")
+	autoReplyEnabled := strings.TrimSpace(config.WhatsappAutoReplyMessage) != ""
+	return fiber.Map{
+		"ok":                           true,
+		"service":                      "go-whatsapp-multidevice",
+		"version":                      config.AppVersion,
+		"commit":                       commit,
+		"app_os":                       config.AppOs,
+		"app_platform":                 config.AppPlatform.String(),
+		"passive_mode":                 config.RetenaPassiveListenerMode,
+		"passive_listener_mode":        config.RetenaPassiveListenerMode,
+		"presence_heartbeat":           config.RetenaPassivePresenceHeartbeat,
+		"passive_presence_heartbeat":   config.RetenaPassivePresenceHeartbeat,
+		"presence_available_heartbeat": config.RetenaPassivePresenceAvailableHeartbeat,
+		"passive_presence_available_heartbeat": config.RetenaPassivePresenceAvailableHeartbeat,
+		"auto_reply_enabled":           autoReplyEnabled,
+		"whatsapp_auto_reply_enabled":  autoReplyEnabled,
+		"auto_mark_read":               config.WhatsappAutoMarkRead,
+		"whatsapp_auto_mark_read":      config.WhatsappAutoMarkRead,
+		"auto_download_media":          config.WhatsappAutoDownloadMedia,
+		"whatsapp_auto_download_media": config.WhatsappAutoDownloadMedia,
+		"auto_reject_call":             config.WhatsappAutoRejectCall,
+		"whatsapp_auto_reject_call":    config.WhatsappAutoRejectCall,
+		"presence_on_connect":          config.WhatsappPresenceOnConnect,
+		"whatsapp_presence_on_connect": config.WhatsappPresenceOnConnect,
+		"session_event_webhook_secret_value_exposed": false,
+	}
+}
+
 func passivePresenceHeartbeatAllowed(c *fiber.Ctx) bool {
 	if !config.RetenaPassivePresenceHeartbeat {
 		return false
@@ -267,6 +297,10 @@ func restServer(_ *cobra.Command, _ []string) {
 			Users: account,
 		}))
 	}
+
+	app.Get("/health/passive-safety", func(c *fiber.Ctx) error {
+		return c.JSON(passiveSafetyStatus())
+	})
 
 	app.Get("/health/observability", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{

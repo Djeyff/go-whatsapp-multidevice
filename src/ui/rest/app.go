@@ -44,9 +44,15 @@ func (handler *App) Login(c *fiber.Ctx) error {
 		Code:    "SUCCESS",
 		Message: "Login success",
 		Results: map[string]any{
-			"device_id":   device.ID(),
-			"qr_link":     fmt.Sprintf("%s://%s%s/%s", c.Protocol(), c.Hostname(), config.AppBasePath, response.ImagePath),
-			"qr_duration": response.Duration,
+			"device_id":          device.ID(),
+			"qr_link":            fmt.Sprintf("%s://%s%s/%s", c.Protocol(), c.Hostname(), config.AppBasePath, response.ImagePath),
+			"qr_duration":        response.Duration,
+			"pairing_session_id": response.PairingSessionID,
+			"qr_generation":      response.QRGeneration,
+			"emitted_at":         response.EmittedAt,
+			"valid_until":        response.ValidUntil,
+			"state":              response.State,
+			"error_code":         response.ErrorCode,
 		},
 	})
 }
