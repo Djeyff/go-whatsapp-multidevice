@@ -69,7 +69,9 @@ func (service *serviceApp) getOrStartPairingSession(instance *whatsapp.DeviceIns
 
 	events, err := client.GetQRChannel(session.Context())
 	if err != nil {
-		session.MarkTerminal(whatsapp.PairingSessionFailed, classifyQRChannelStartError(err), time.Now())
+		reasonClass := classifyQRChannelStartError(err)
+		session.MarkTerminal(whatsapp.PairingSessionFailed, reasonClass, time.Now())
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", reasonClass, "WhatsApp pairing session could not start")
 		if errors.Is(err, whatsmeow.ErrQRStoreContainsID) {
 			_ = client.Connect()
 			instance.UpdateStateFromClient()
@@ -81,25 +83,31 @@ func (service *serviceApp) getOrStartPairingSession(instance *whatsapp.DeviceIns
 		return session, pkgError.ErrQrChannel
 	}
 
-	go whatsapp.ConsumePairingQRChannel(session, events, whatsapp.PairingQRConsumer{
-		WriteImage: func(code string) (string, error) {
-			path := fmt.Sprintf("%s/scan-qr-%s.png", config.PathQrCode, fiberUtils.UUIDv4())
-			if err := pkgUtils.WriteQRWithLogo(code, 512, path); err != nil {
-				return "", err
-			}
-			return path, nil
-		},
-		RemoveImageAfter: func(path string, after time.Duration) {
-			time.AfterFunc(after+30*time.Second, func() {
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-					logrus.Warnf("[LOGIN] failed to remove expired QR image")
+	go func() {
+		whatsapp.ConsumePairingQRChannel(session, events, whatsapp.PairingQRConsumer{
+			WriteImage: func(code string) (string, error) {
+				path := fmt.Sprintf("%s/scan-qr-%s.png", config.PathQrCode, fiberUtils.UUIDv4())
+				if err := pkgUtils.WriteQRWithLogo(code, 512, path); err != nil {
+					return "", err
 				}
-			})
-		},
-	})
+				return path, nil
+			},
+			RemoveImageAfter: func(path string, after time.Duration) {
+				time.AfterFunc(after+30*time.Second, func() {
+					if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+						logrus.Warnf("[LOGIN] failed to remove expired QR image")
+					}
+				})
+			},
+		})
+		if eventType, severity, reasonClass, summary, ok := classifyPairingSessionEvent(session.Snapshot()); ok {
+			whatsapp.NotifySessionEvent(context.Background(), instance, eventType, severity, reasonClass, summary)
+		}
+	}()
 
 	if err := client.Connect(); err != nil {
 		session.MarkTerminal(whatsapp.PairingSessionFailed, "connect_failed", time.Now())
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", "connect_failed", "WhatsApp pairing session could not connect")
 		logger.Error("Error when connect to whatsapp", err)
 		return session, pkgError.ErrReconnect
 	}
@@ -174,6 +182,7 @@ func (service *serviceApp) LoginWithCode(ctx context.Context, deviceID string, p
 
 	session, err := service.getOrStartPairingSession(instance, client)
 	if err != nil {
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", "pairing_code_connect_failed", "WhatsApp pairing-code login could not establish a connection")
 		return loginCode, err
 	}
 
@@ -183,6 +192,7 @@ func (service *serviceApp) LoginWithCode(ctx context.Context, deviceID string, p
 	})
 	if err != nil {
 		logrus.Warnf("[LOGIN_CODE][%s] phone pairing failed", deviceID)
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", "pairing_code_request_failed", "WhatsApp pairing-code request failed")
 		return loginCode, err
 	}
 
@@ -326,6 +336,7 @@ func (service *serviceApp) Reconnect(_ context.Context, deviceID string) (err er
 	}
 
 	if client.Store == nil || client.Store.ID == nil {
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "critical", "session_deleted", "WhatsApp stored session is missing and cannot reconnect automatically")
 		return fmt.Errorf("device %s is not logged in (session deleted)", deviceID)
 	}
 
@@ -334,8 +345,23 @@ func (service *serviceApp) Reconnect(_ context.Context, deviceID string) (err er
 	instance.UpdateStateFromClient()
 	if err != nil {
 		logrus.Errorf("[RECONNECT][%s] Reconnect failed: %v", deviceID, err)
+		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", "reconnect_failed", "WhatsApp reconnect attempt failed")
 	}
 	return err
+}
+
+func classifyPairingSessionEvent(snapshot whatsapp.PairingSessionSnapshot) (string, string, string, string, bool) {
+	switch snapshot.State {
+	case whatsapp.PairingSessionExpired:
+		return "qr_expired", "attention", snapshot.ErrorCode, "WhatsApp QR login expired before pairing completed", true
+	case whatsapp.PairingSessionFailed:
+		if snapshot.ErrorCode == "client_outdated" {
+			return "reconnect_blocked", "attention", snapshot.ErrorCode, "WhatsApp QR login was blocked because the client is out of date", true
+		}
+		return "qr_invalid", "attention", snapshot.ErrorCode, "WhatsApp QR login returned an invalid or unexpected QR event", true
+	default:
+		return "", "", "", "", false
+	}
 }
 
 func (service *serviceApp) Status(_ context.Context, deviceID string) (bool, bool, error) {

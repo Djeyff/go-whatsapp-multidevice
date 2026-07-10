@@ -23,6 +23,8 @@ var (
 	RetenaStaleDeviceCleanupGraceMinutes    = 30
 	RetenaStaleDeviceCleanupMaxPerRun       = 25
 	RetenaProtectedGowaDeviceIDs            []string
+	RetenaSessionEventWebhook               = ""
+	RetenaSessionEventWebhookSecret         = ""
 
 	McpPort = "8080"
 	McpHost = "localhost"

@@ -9,51 +9,7 @@ import (
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/gofiber/fiber/v2"
-	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 )
-
-func TestPassiveSafetyStatusRedactsAndClassifies(t *testing.T) {
-	previousOS := config.AppOs
-	previousPlatform := config.AppPlatform
-	previousPassive := config.RetenaPassiveListenerMode
-	t.Cleanup(func() {
-		config.AppOs = previousOS
-		config.AppPlatform = previousPlatform
-		config.RetenaPassiveListenerMode = previousPassive
-	})
-	config.AppOs = "Retena"
-	config.AppPlatform = waCompanionReg.DeviceProps_DESKTOP
-	config.RetenaPassiveListenerMode = true
-
-	t.Setenv("COMMIT_SHA", "candidate-sha")
-	payload := passiveSafetyStatus()
-	for key, want := range map[string]any{
-		"app_os":       "Retena",
-		"app_platform": "DESKTOP",
-		"commit":       "candidate-sha",
-		"passive_mode": true,
-	} {
-		if got := payload[key]; got != want {
-			t.Fatalf("%s = %#v, want %#v", key, got, want)
-		}
-	}
-	if payload["session_event_webhook_secret_value_exposed"] != false {
-		t.Fatal("passive safety status must never expose an internal webhook secret value")
-	}
-	for _, key := range []string{
-		"presence_heartbeat",
-		"presence_available_heartbeat",
-		"auto_reply_enabled",
-		"auto_mark_read",
-		"auto_download_media",
-		"auto_reject_call",
-		"presence_on_connect",
-	} {
-		if _, ok := payload[key]; !ok {
-			t.Fatalf("passive safety payload missing %s", key)
-		}
-	}
-}
 
 func TestPassiveListenerGuardPresenceHeartbeatException(t *testing.T) {
 	prevPassive := config.RetenaPassiveListenerMode
@@ -119,6 +75,54 @@ func TestPassiveListenerGuardPresenceHeartbeatException(t *testing.T) {
 	}
 	if resp.StatusCode != fiber.StatusForbidden {
 		t.Fatalf("message status = %d, want %d", resp.StatusCode, fiber.StatusForbidden)
+	}
+}
+
+func TestPassiveSafetyStatusRedactsAndClassifies(t *testing.T) {
+	prevPassive := config.RetenaPassiveListenerMode
+	prevReply := config.WhatsappAutoReplyMessage
+	prevMarkRead := config.WhatsappAutoMarkRead
+	prevDownload := config.WhatsappAutoDownloadMedia
+	prevRejectCall := config.WhatsappAutoRejectCall
+	prevPresence := config.WhatsappPresenceOnConnect
+	prevWebhook := config.RetenaSessionEventWebhook
+	prevWebhookSecret := config.RetenaSessionEventWebhookSecret
+	t.Cleanup(func() {
+		config.RetenaPassiveListenerMode = prevPassive
+		config.WhatsappAutoReplyMessage = prevReply
+		config.WhatsappAutoMarkRead = prevMarkRead
+		config.WhatsappAutoDownloadMedia = prevDownload
+		config.WhatsappAutoRejectCall = prevRejectCall
+		config.WhatsappPresenceOnConnect = prevPresence
+		config.RetenaSessionEventWebhook = prevWebhook
+		config.RetenaSessionEventWebhookSecret = prevWebhookSecret
+	})
+
+	config.RetenaPassiveListenerMode = true
+	config.WhatsappAutoReplyMessage = ""
+	config.WhatsappAutoMarkRead = false
+	config.WhatsappAutoDownloadMedia = false
+	config.WhatsappAutoRejectCall = false
+	config.WhatsappPresenceOnConnect = "none"
+	config.RetenaSessionEventWebhook = "https://api.example/internal/gowa/session-event"
+	config.RetenaSessionEventWebhookSecret = "super-secret"
+
+	status := passiveSafetyStatus()
+	if status["ok"] != true {
+		t.Fatalf("passive safety ok = %v, want true", status["ok"])
+	}
+	if status["session_event_webhook_secret_value_exposed"] != false {
+		t.Fatalf("passive safety must not expose webhook secret values")
+	}
+
+	config.WhatsappAutoMarkRead = true
+	status = passiveSafetyStatus()
+	if status["ok"] != false {
+		t.Fatalf("passive safety ok = %v, want false when auto mark read is enabled", status["ok"])
+	}
+	findings, ok := status["unsafe_findings"].([]string)
+	if !ok || len(findings) == 0 || findings[0] != "whatsapp_auto_mark_read_enabled" {
+		t.Fatalf("unexpected unsafe findings: %#v", status["unsafe_findings"])
 	}
 }
 
