@@ -10,10 +10,10 @@ var (
 	AppVersion                              = "v8.10.0"
 	AppPort                                 = "3000"
 	AppHost                                 = "0.0.0.0"
-	AppDebug                                = false
-	AppOs                                   = "Retena"
-	AppPlatform                             = waCompanionReg.DeviceProps_DESKTOP
-	AppBasicAuthCredential                  []string
+AppDebug                                = false
+AppOs                                   = "Retena"
+AppPlatform                             = waCompanionReg.DeviceProps_DESKTOP
+AppBasicAuthCredential                  []string
 	AppBasePath                             = ""
 	AppTrustedProxies                       []string // Trusted proxy IP ranges (e.g., "0.0.0.0/0" for all, or specific CIDRs)
 	HistorySyncWriteFiles                   = false
