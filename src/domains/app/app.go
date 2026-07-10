@@ -27,14 +27,14 @@ type DevicesResponse struct {
 }
 
 type LoginResponse struct {
-	ImagePath        string        `json:"image_path"`
-	Duration         time.Duration `json:"duration"`
-	PairingSessionID string        `json:"pairing_session_id"`
-	QRGeneration     int64         `json:"qr_generation"`
-	EmittedAt        time.Time     `json:"emitted_at"`
-	ValidUntil       time.Time     `json:"valid_until"`
-	State            string        `json:"state"`
-	ErrorCode        string        `json:"error_code,omitempty"`
+	ImagePath        string    `json:"image_path"`
+	Duration         int64     `json:"duration"`
+	PairingSessionID string    `json:"pairing_session_id"`
+	QRGeneration     int64     `json:"qr_generation"`
+	EmittedAt        time.Time `json:"emitted_at"`
+	ValidUntil       time.Time `json:"valid_until"`
+	State            string    `json:"state"`
+	ErrorCode        string    `json:"error_code,omitempty"`
 }
 
 type PasskeyChallengeResponse struct {

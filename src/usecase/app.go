@@ -133,7 +133,7 @@ func loginResponseFromPairingSnapshot(snapshot whatsapp.PairingSessionSnapshot, 
 	}
 	return domainApp.LoginResponse{
 		ImagePath:        snapshot.ImagePath,
-		Duration:         time.Duration(remaining / time.Second),
+		Duration:         int64(remaining / time.Second),
 		PairingSessionID: snapshot.SessionID,
 		QRGeneration:     snapshot.Generation,
 		EmittedAt:        snapshot.EmittedAt,
