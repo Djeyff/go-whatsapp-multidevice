@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,57 @@ func TestSQLiteRepositoryInitializesMessageReactionsSchema(t *testing.T) {
 	}
 	if tableName != "message_reactions" {
 		t.Fatalf("expected message_reactions table, got %q", tableName)
+	}
+}
+
+func TestSQLiteRepositoryRepairsVersionedSchemaDrift(t *testing.T) {
+	repo := newTestSQLiteRepository(t)
+
+	// Reproduce the persisted Blue shape: the version ledger claimed v21 while
+	// objects introduced by the current migration ordering were absent.
+	for _, statement := range []string{
+		`DROP TABLE chatwoot_forward_queue`,
+		`DROP TABLE chatwoot_message_links`,
+		`DROP TABLE message_edits`,
+		`DROP TABLE message_reactions`,
+		`ALTER TABLE messages DROP COLUMN referral_metadata`,
+		`ALTER TABLE devices DROP COLUMN webhook_insecure_skip_verify`,
+		`ALTER TABLE devices DROP COLUMN webhook_events`,
+		`ALTER TABLE devices DROP COLUMN webhook_secret`,
+		`ALTER TABLE devices DROP COLUMN webhook_url`,
+		`DELETE FROM schema_info WHERE version > 21`,
+	} {
+		if _, err := repo.db.Exec(statement); err != nil {
+			t.Fatalf("damage schema with %q: %v", statement, err)
+		}
+	}
+
+	if err := repo.InitializeSchema(); err != nil {
+		t.Fatalf("repair drifted schema: %v", err)
+	}
+
+	if err := repo.ValidateSchemaContract(); err != nil {
+		t.Fatalf("validate repaired schema: %v", err)
+	}
+
+	var version int
+	if err := repo.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_info`).Scan(&version); err != nil {
+		t.Fatalf("read repaired schema version: %v", err)
+	}
+	if version != CurrentSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, CurrentSchemaVersion)
+	}
+}
+
+func TestSQLiteRepositoryRejectsFutureSchemaVersion(t *testing.T) {
+	repo := newTestSQLiteRepository(t)
+	if _, err := repo.db.Exec(`INSERT INTO schema_info(version) VALUES (?)`, CurrentSchemaVersion+1); err != nil {
+		t.Fatalf("seed future schema version: %v", err)
+	}
+
+	err := repo.InitializeSchema()
+	if err == nil || !strings.Contains(err.Error(), "newer than supported") {
+		t.Fatalf("expected future schema rejection, got %v", err)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -43,8 +44,9 @@ var (
 	whatsappCli *whatsmeow.Client
 
 	// Chat Storage
-	chatStorageDB   *sql.DB
-	chatStorageRepo domainChatStorage.IChatStorageRepository
+	chatStorageDB          *sql.DB
+	chatStorageRepo        domainChatStorage.IChatStorageRepository
+	chatStorageSchemaReady atomic.Bool
 
 	// Usecase
 	appUsecase        domainApp.IAppUsecase
@@ -474,7 +476,12 @@ func initApp() {
 	}
 
 	chatStorageRepo = chatstorage.NewStorageRepository(chatStorageDB)
-	chatStorageRepo.InitializeSchema()
+	chatStorageSchemaReady.Store(false)
+	if err := chatStorageRepo.InitializeSchema(); err != nil {
+		_ = chatStorageDB.Close()
+		logrus.Fatalf("failed to initialize chat storage schema: %v", err)
+	}
+	chatStorageSchemaReady.Store(true)
 
 	whatsappDB := whatsapp.InitWaDB(ctx, config.DBURI)
 	var keysDB *sqlstore.Container

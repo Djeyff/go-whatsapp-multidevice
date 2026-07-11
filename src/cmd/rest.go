@@ -13,6 +13,8 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
+	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/observability"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest"
@@ -98,6 +100,33 @@ func passiveSafetyStatus() fiber.Map {
 	presenceOnConnect := strings.ToLower(strings.TrimSpace(config.WhatsappPresenceOnConnect))
 	autoReplyEnabled := strings.TrimSpace(config.WhatsappAutoReplyMessage) != ""
 	unsafeFindings := []string{}
+	schemaReady := chatStorageSchemaReady.Load()
+	globalWebhookConfigured := false
+	for _, webhookURL := range config.WhatsappWebhook {
+		if strings.TrimSpace(webhookURL) != "" {
+			globalWebhookConfigured = true
+			break
+		}
+	}
+
+	var deviceRecords []*domainChatStorage.DeviceRecord
+	var deviceWebhookReadError bool
+	if chatStorageRepo != nil {
+		var err error
+		deviceRecords, err = chatStorageRepo.ListDeviceRecords()
+		deviceWebhookReadError = err != nil
+	}
+	deviceWebhookTotal, deviceWebhookConfigured := passiveDeviceWebhookCoverage(deviceRecords)
+	webhookDeliveryConfigured := globalWebhookConfigured || deviceWebhookTotal == 0 || deviceWebhookConfigured == deviceWebhookTotal
+
+	if !schemaReady {
+		unsafeFindings = append(unsafeFindings, "chat_storage_schema_not_ready")
+	}
+	if deviceWebhookReadError {
+		unsafeFindings = append(unsafeFindings, "device_webhook_config_unreadable")
+	} else if !webhookDeliveryConfigured {
+		unsafeFindings = append(unsafeFindings, "device_webhook_delivery_unconfigured")
+	}
 	if !config.RetenaPassiveListenerMode {
 		unsafeFindings = append(unsafeFindings, "retena_passive_listener_mode_disabled")
 	}
@@ -122,6 +151,13 @@ func passiveSafetyStatus() fiber.Map {
 		"service":                                    "go-whatsapp-multidevice",
 		"version":                                    config.AppVersion,
 		"commit":                                     firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+		"chat_storage_schema_ready":                  schemaReady,
+		"chat_storage_schema_version":                chatstorage.CurrentSchemaVersion,
+		"global_webhook_configured":                  globalWebhookConfigured,
+		"device_webhook_records_total":               deviceWebhookTotal,
+		"device_webhook_records_configured":          deviceWebhookConfigured,
+		"webhook_delivery_configured":                webhookDeliveryConfigured,
+		"device_webhook_config_read_error":           deviceWebhookReadError,
 		"app_os":                                     config.AppOs,
 		"app_platform":                               config.AppPlatform.String(),
 		"passive_mode":                               config.RetenaPassiveListenerMode,
@@ -145,6 +181,19 @@ func passiveSafetyStatus() fiber.Map {
 		"session_event_webhook_secret_value_exposed": false,
 		"unsafe_findings":                            unsafeFindings,
 	}
+}
+
+func passiveDeviceWebhookCoverage(records []*domainChatStorage.DeviceRecord) (total int, configured int) {
+	for _, record := range records {
+		if record == nil || strings.TrimSpace(record.DeviceID) == "" {
+			continue
+		}
+		total++
+		if record.WebhookURL != nil && strings.TrimSpace(*record.WebhookURL) != "" {
+			configured++
+		}
+	}
+	return total, configured
 }
 
 func chatwootWebhookSecretCandidates(c *fiber.Ctx) []string {
@@ -285,18 +334,24 @@ func restServer(_ *cobra.Command, _ []string) {
 	// Registered at root path (ignoring AppBasePath) to ensure fixed availability
 	// for infrastructure health probes (Kubernetes liveness/readiness, Docker healthcheck, etc.)
 	app.Get("/health", func(c *fiber.Ctx) error {
-		if dm != nil && dm.IsHealthy() {
+		passiveSafety := passiveSafetyStatus()
+		if dm != nil && dm.IsHealthy() && passiveSafety["ok"] == true {
 			return c.JSON(fiber.Map{
-				"ok":      true,
-				"service": "go-whatsapp-multidevice",
-				"version": config.AppVersion,
-				"commit":  firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+				"ok":                          true,
+				"service":                     "go-whatsapp-multidevice",
+				"version":                     config.AppVersion,
+				"commit":                      firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
+				"chat_storage_schema_ready":   passiveSafety["chat_storage_schema_ready"],
+				"webhook_delivery_configured": passiveSafety["webhook_delivery_configured"],
 			})
 		}
 		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
-			"ok":      false,
-			"service": "go-whatsapp-multidevice",
-			"error":   "Service Unavailable",
+			"ok":                          false,
+			"service":                     "go-whatsapp-multidevice",
+			"error":                       "Service Unavailable",
+			"chat_storage_schema_ready":   passiveSafety["chat_storage_schema_ready"],
+			"webhook_delivery_configured": passiveSafety["webhook_delivery_configured"],
+			"attention":                   passiveSafety["unsafe_findings"],
 		})
 	})
 
