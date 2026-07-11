@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
+	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -87,6 +89,9 @@ func TestPassiveSafetyStatusRedactsAndClassifies(t *testing.T) {
 	prevPresence := config.WhatsappPresenceOnConnect
 	prevWebhook := config.RetenaSessionEventWebhook
 	prevWebhookSecret := config.RetenaSessionEventWebhookSecret
+	prevGlobalWebhook := config.WhatsappWebhook
+	prevSchemaReady := chatStorageSchemaReady.Load()
+	prevChatStorageRepo := chatStorageRepo
 	t.Cleanup(func() {
 		config.RetenaPassiveListenerMode = prevPassive
 		config.WhatsappAutoReplyMessage = prevReply
@@ -96,6 +101,9 @@ func TestPassiveSafetyStatusRedactsAndClassifies(t *testing.T) {
 		config.WhatsappPresenceOnConnect = prevPresence
 		config.RetenaSessionEventWebhook = prevWebhook
 		config.RetenaSessionEventWebhookSecret = prevWebhookSecret
+		config.WhatsappWebhook = prevGlobalWebhook
+		chatStorageSchemaReady.Store(prevSchemaReady)
+		chatStorageRepo = prevChatStorageRepo
 	})
 
 	config.RetenaPassiveListenerMode = true
@@ -106,6 +114,9 @@ func TestPassiveSafetyStatusRedactsAndClassifies(t *testing.T) {
 	config.WhatsappPresenceOnConnect = "none"
 	config.RetenaSessionEventWebhook = "https://api.example/internal/gowa/session-event"
 	config.RetenaSessionEventWebhookSecret = "super-secret"
+	config.WhatsappWebhook = nil
+	chatStorageSchemaReady.Store(true)
+	chatStorageRepo = nil
 
 	status := passiveSafetyStatus()
 	if status["ok"] != true {
@@ -113,6 +124,12 @@ func TestPassiveSafetyStatusRedactsAndClassifies(t *testing.T) {
 	}
 	if status["session_event_webhook_secret_value_exposed"] != false {
 		t.Fatalf("passive safety must not expose webhook secret values")
+	}
+	if status["chat_storage_schema_ready"] != true {
+		t.Fatalf("passive safety must expose ready chat storage schema")
+	}
+	if status["chat_storage_schema_version"] != chatstorage.CurrentSchemaVersion {
+		t.Fatalf("unexpected chat storage schema version: %v", status["chat_storage_schema_version"])
 	}
 
 	config.WhatsappAutoMarkRead = true
@@ -123,6 +140,19 @@ func TestPassiveSafetyStatusRedactsAndClassifies(t *testing.T) {
 	findings, ok := status["unsafe_findings"].([]string)
 	if !ok || len(findings) == 0 || findings[0] != "whatsapp_auto_mark_read_enabled" {
 		t.Fatalf("unexpected unsafe findings: %#v", status["unsafe_findings"])
+	}
+}
+
+func TestPassiveDeviceWebhookCoverage(t *testing.T) {
+	configuredURL := "https://api.example/webhook/gowa"
+	total, configured := passiveDeviceWebhookCoverage([]*domainChatStorage.DeviceRecord{
+		{DeviceID: "device-a", WebhookURL: &configuredURL},
+		{DeviceID: "device-b"},
+		nil,
+		{},
+	})
+	if total != 2 || configured != 1 {
+		t.Fatalf("coverage = %d/%d, want 1/2", configured, total)
 	}
 }
 

@@ -1120,10 +1120,12 @@ func (r *SQLiteRepository) SaveDeviceRecord(record *domainChatStorage.DeviceReco
 // ListDeviceRecords returns all registered devices.
 func (r *SQLiteRepository) ListDeviceRecords() ([]*domainChatStorage.DeviceRecord, error) {
 	rows, err := r.db.Query(`
-		SELECT device_id, display_name, jid, created_at, updated_at
-		FROM devices
-		ORDER BY created_at ASC
-	`)
+			SELECT device_id, display_name, jid, webhook_url,
+				COALESCE(webhook_secret, ''), COALESCE(webhook_events, ''),
+				COALESCE(webhook_insecure_skip_verify, FALSE), created_at, updated_at
+			FROM devices
+			ORDER BY created_at ASC
+		`)
 	if err != nil {
 		return nil, err
 	}
@@ -1132,7 +1134,17 @@ func (r *SQLiteRepository) ListDeviceRecords() ([]*domainChatStorage.DeviceRecor
 	var records []*domainChatStorage.DeviceRecord
 	for rows.Next() {
 		var rec domainChatStorage.DeviceRecord
-		if err := rows.Scan(&rec.DeviceID, &rec.DisplayName, &rec.JID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&rec.DeviceID,
+			&rec.DisplayName,
+			&rec.JID,
+			&rec.WebhookURL,
+			&rec.WebhookSecret,
+			&rec.WebhookEvents,
+			&rec.WebhookInsecureSkipVerify,
+			&rec.CreatedAt,
+			&rec.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		records = append(records, &rec)
@@ -1149,11 +1161,23 @@ func (r *SQLiteRepository) GetDeviceRecord(deviceID string) (*domainChatStorage.
 
 	rec := &domainChatStorage.DeviceRecord{}
 	err := r.db.QueryRow(`
-		SELECT device_id, display_name, jid, created_at, updated_at
-		FROM devices
-		WHERE device_id = ?
-		LIMIT 1
-	`, deviceID).Scan(&rec.DeviceID, &rec.DisplayName, &rec.JID, &rec.CreatedAt, &rec.UpdatedAt)
+			SELECT device_id, display_name, jid, webhook_url,
+				COALESCE(webhook_secret, ''), COALESCE(webhook_events, ''),
+				COALESCE(webhook_insecure_skip_verify, FALSE), created_at, updated_at
+			FROM devices
+			WHERE device_id = ?
+			LIMIT 1
+		`, deviceID).Scan(
+		&rec.DeviceID,
+		&rec.DisplayName,
+		&rec.JID,
+		&rec.WebhookURL,
+		&rec.WebhookSecret,
+		&rec.WebhookEvents,
+		&rec.WebhookInsecureSkipVerify,
+		&rec.CreatedAt,
+		&rec.UpdatedAt,
+	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -2002,23 +2026,188 @@ func (r *SQLiteRepository) StoreSentMessageWithContext(ctx context.Context, mess
 
 // _____________________________________________________________________________________________________________________
 
-// initializeSchema creates or migrates the database schema
+// CurrentSchemaVersion is the highest schema version understood by this binary.
+const CurrentSchemaVersion = 34
+
+var requiredSchemaColumns = map[string][]string{
+	"chats": {
+		"jid", "device_id", "name", "last_message_time", "ephemeral_expiration",
+		"created_at", "updated_at", "archived",
+	},
+	"messages": {
+		"id", "chat_jid", "device_id", "sender", "content", "timestamp", "is_from_me",
+		"media_type", "filename", "url", "media_key", "file_sha256", "file_enc_sha256",
+		"file_length", "created_at", "updated_at", "call_metadata", "referral_metadata",
+		"direct_path",
+	},
+	"devices": {
+		"device_id", "display_name", "jid", "created_at", "updated_at", "webhook_url",
+		"webhook_secret", "webhook_events", "webhook_insecure_skip_verify",
+	},
+	"message_reactions": {
+		"message_id", "chat_jid", "device_id", "reactor_jid", "emoji", "is_from_me",
+		"reaction_timestamp", "created_at", "updated_at",
+	},
+	"message_edits": {
+		"original_message_id", "edit_event_id", "chat_jid", "device_id", "editor",
+		"previous_content", "new_content", "edited_at", "created_at",
+	},
+	"chatwoot_message_links": {
+		"device_id", "wa_message_id", "wa_chat_jid", "chatwoot_message_id",
+		"chatwoot_conversation_id", "chatwoot_inbox_id", "chatwoot_contact_inbox_source_id",
+		"source_id", "direction", "is_read", "created_at", "updated_at",
+	},
+	"chatwoot_forward_queue": {
+		"id", "device_id", "event_name", "wa_message_id", "payload_json", "attempts",
+		"last_error", "next_attempt_at", "created_at", "updated_at",
+	},
+}
+
+var requiredSchemaIndexes = []string{
+	"idx_messages_chat_jid",
+	"idx_messages_device",
+	"idx_messages_timestamp",
+	"idx_messages_media_type",
+	"idx_messages_sender",
+	"idx_chats_last_message",
+	"idx_chats_name",
+	"idx_chats_device",
+	"idx_devices_created_at",
+	"idx_chats_archived",
+	"idx_message_reactions_lookup",
+	"idx_message_edits_original",
+	"idx_message_edits_device",
+	"idx_message_edits_edited_at",
+	"idx_chatwoot_links_chatwoot_id",
+	"idx_chatwoot_links_source_id",
+	"idx_chatwoot_links_conversation",
+	"idx_chatwoot_links_unread",
+	"idx_chatwoot_forward_queue_due",
+}
+
+// InitializeSchema creates, migrates, and validates the database schema. The
+// object-level reconciliation is intentional: older releases reused positional
+// version numbers after inserting migrations, so the version ledger alone
+// cannot prove that a persisted database has the objects the current binary uses.
 func (r *SQLiteRepository) InitializeSchema() error {
-	// Get current schema version
 	version, err := r.getSchemaVersion()
 	if err != nil {
 		return err
 	}
 
-	// Run migrations based on version
 	migrations := r.getMigrations()
+	if len(migrations) != CurrentSchemaVersion {
+		return fmt.Errorf("chat storage migration count %d does not match current schema version %d", len(migrations), CurrentSchemaVersion)
+	}
+	if version > CurrentSchemaVersion {
+		return fmt.Errorf("chat storage schema version %d is newer than supported version %d", version, CurrentSchemaVersion)
+	}
+
+	var migrationErr error
 	for i := version; i < len(migrations); i++ {
 		if err := r.runMigration(migrations[i], i+1); err != nil {
-			return fmt.Errorf("failed to run migration %d: %w", i+1, err)
+			migrationErr = fmt.Errorf("failed to run migration %d: %w", i+1, err)
+			break
 		}
 	}
 
+	contractErr := r.ValidateSchemaContract()
+	if migrationErr == nil && contractErr == nil {
+		return nil
+	}
+
+	if err := r.reconcileSchema(migrations); err != nil {
+		return fmt.Errorf("chat storage schema reconciliation failed (migration_error=%v, contract_error=%v): %w", migrationErr, contractErr, err)
+	}
+	if err := r.ValidateSchemaContract(); err != nil {
+		return fmt.Errorf("chat storage schema contract remains invalid after reconciliation: %w", err)
+	}
 	return nil
+}
+
+func (r *SQLiteRepository) reconcileSchema(migrations []string) error {
+	for index, migration := range migrations {
+		version := index + 1
+		if err := r.runMigration(migration, version); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("reconcile migration %d: %w", version, err)
+			}
+			if err := r.markSchemaVersion(version); err != nil {
+				return fmt.Errorf("record reconciled migration %d: %w", version, err)
+			}
+		}
+	}
+	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
+}
+
+func (r *SQLiteRepository) markSchemaVersion(version int) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM schema_info WHERE version = ?", version); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO schema_info (version) VALUES (?)", version); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ValidateSchemaContract proves the actual tables, columns, and indexes used by
+// runtime queries. It deliberately does not trust schema_info by itself.
+func (r *SQLiteRepository) ValidateSchemaContract() error {
+	for table, columns := range requiredSchemaColumns {
+		actual, err := r.tableColumns(table)
+		if err != nil {
+			return fmt.Errorf("inspect table %s: %w", table, err)
+		}
+		if len(actual) == 0 {
+			return fmt.Errorf("required table %s is missing", table)
+		}
+		for _, column := range columns {
+			if !actual[column] {
+				return fmt.Errorf("required column %s.%s is missing", table, column)
+			}
+		}
+	}
+
+	for _, index := range requiredSchemaIndexes {
+		var count int
+		if err := r.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&count); err != nil {
+			return fmt.Errorf("inspect index %s: %w", index, err)
+		}
+		if count != 1 {
+			return fmt.Errorf("required index %s is missing", index)
+		}
+	}
+	return nil
+}
+
+func (r *SQLiteRepository) tableColumns(table string) (map[string]bool, error) {
+	rows, err := r.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+	return columns, rows.Err()
 }
 
 // getSchemaVersion returns the current schema version
