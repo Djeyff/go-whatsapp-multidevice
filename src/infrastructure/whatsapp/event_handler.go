@@ -56,7 +56,10 @@ func handler(ctx context.Context, instance *DeviceInstance, rawEvt any) {
 		handleConnectFailure(ctx, instance, evt)
 	case *events.TemporaryBan:
 		handleTemporaryBan(ctx, instance, evt)
+	case *events.UndecryptableMessage:
+		logUndecryptableMessage(instance, evt)
 	case *events.Message:
+		logDecryptRecovery(instance, evt)
 		handleMessage(ctx, evt, chatStorageRepo, client)
 	case *events.Receipt:
 		handleReceipt(ctx, evt, instance.JID(), client)
