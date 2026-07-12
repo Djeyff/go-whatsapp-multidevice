@@ -426,7 +426,7 @@ func (m *DeviceManager) PurgeDevice(ctx context.Context, deviceID string) error 
 	if inst, ok := m.GetDevice(deviceID); ok && inst != nil {
 		if cli := inst.GetClient(); cli != nil {
 			if err := cli.Logout(ctx); err != nil {
-				logrus.WithError(err).Warnf("[DEVICE_MANAGER] logout failed for device %s", deviceID)
+				logrus.WithFields(logrus.Fields{"event": "device_logout", "outcome": "failed", "device_ref": safeLogRef("device", deviceID), "error_class": safeErrorClass(err)}).Warn("[DEVICE_MANAGER] logout failed")
 				recordErr(err)
 			}
 			cli.Disconnect()
@@ -436,7 +436,7 @@ func (m *DeviceManager) PurgeDevice(ctx context.Context, deviceID string) error 
 	// Delete chatstorage data for this device
 	if m.storage != nil {
 		if err := m.storage.DeleteDeviceData(deviceID); err != nil {
-			logrus.WithError(err).Warnf("[DEVICE_MANAGER] failed to delete chatstorage for device %s", deviceID)
+			logrus.WithFields(logrus.Fields{"event": "device_chatstorage_delete", "outcome": "failed", "device_ref": safeLogRef("device", deviceID), "error_class": safeErrorClass(err)}).Warn("[DEVICE_MANAGER] chatstorage delete failed")
 			recordErr(err)
 		}
 	}
@@ -446,7 +446,7 @@ func (m *DeviceManager) PurgeDevice(ctx context.Context, deviceID string) error 
 		storeJID = inst.JID()
 	}
 	if err := m.deleteStoreRowsForJID(ctx, storeJID); err != nil {
-		logrus.WithError(err).Warnf("[DEVICE_MANAGER] failed to delete store rows for device %s", deviceID)
+		logrus.WithFields(logrus.Fields{"event": "device_store_delete", "outcome": "failed", "device_ref": safeLogRef("device", deviceID), "error_class": safeErrorClass(err)}).Warn("[DEVICE_MANAGER] store row delete failed")
 		recordErr(err)
 	}
 
@@ -468,7 +468,7 @@ func (m *DeviceManager) LogoutDeviceKeepSlot(ctx context.Context, deviceID strin
 	if cli := inst.GetClient(); cli != nil {
 		if cli.Store != nil && cli.Store.ID != nil {
 			if err := cli.Logout(ctx); err != nil {
-				logrus.WithError(err).Warnf("[DEVICE_MANAGER] remote unlink failed for device %s (best-effort)", deviceID)
+				logrus.WithFields(logrus.Fields{"event": "device_unlink", "outcome": "failed", "device_ref": safeLogRef("device", deviceID), "error_class": safeErrorClass(err)}).Warn("[DEVICE_MANAGER] remote unlink failed")
 			}
 		}
 		cli.Disconnect()
@@ -626,11 +626,11 @@ func (m *DeviceManager) CreateDevice(ctx context.Context, requestedID string) (*
 			CreatedAt:   instance.CreatedAt(),
 			UpdatedAt:   instance.CreatedAt(),
 		}); err != nil {
-			logrus.WithError(err).Warnf("[DEVICE_MANAGER] failed to persist device %s", id)
+			logrus.WithFields(logrus.Fields{"event": "device_registry_persist", "outcome": "failed", "device_ref": safeLogRef("device", id), "error_class": safeErrorClass(err)}).Warn("[DEVICE_MANAGER] device persist failed")
 		}
 	}
 
-	logrus.WithContext(ctx).Infof("[DEVICE_MANAGER] created device placeholder %s", id)
+	logrus.WithContext(ctx).WithField("device_ref", safeLogRef("device", id)).Info("[DEVICE_MANAGER] created device placeholder")
 	return instance, nil
 }
 
@@ -670,7 +670,7 @@ func (m *DeviceManager) LoadExistingDevices(ctx context.Context) error {
 	if m.storage != nil {
 		records, err := m.storage.ListDeviceRecords()
 		if err != nil {
-			logrus.WithError(err).Warn("[DEVICE_MANAGER] failed to load device registry")
+			logrus.WithField("error_class", safeErrorClass(err)).Warn("[DEVICE_MANAGER] failed to load device registry")
 		} else {
 			logrus.Infof("[DEVICE_MANAGER] discovered %d device records in registry", len(records))
 			m.loadFromRegistry(records)
@@ -714,7 +714,7 @@ func (m *DeviceManager) LoadExistingDevices(ctx context.Context) error {
 
 		// Match orphaned device with this JID
 		if orphanDevice != nil {
-			logrus.Infof("[DEVICE_MANAGER] matching orphaned device %s with JID %s", orphanDevice.ID(), jid)
+			logrus.WithFields(logrus.Fields{"device_ref": safeLogRef("device", orphanDevice.ID()), "jid_ref": safeLogRef("jid", jid)}).Info("[DEVICE_MANAGER] matching orphaned device with JID")
 			orphanDevice.mu.Lock()
 			orphanDevice.jid = jid
 			orphanDevice.mu.Unlock()
@@ -761,7 +761,7 @@ func (m *DeviceManager) loadFromRegistry(records []*domainChatStorage.DeviceReco
 		// Skip auto-created devices if manual device with same JID exists
 		isAutoCreated := strings.Contains(rec.DeviceID, "@")
 		if isAutoCreated && manualDeviceJIDs[rec.DeviceID] {
-			logrus.Warnf("[DEVICE_MANAGER] removing auto-created device %s", rec.DeviceID)
+			logrus.WithField("device_ref", safeLogRef("device", rec.DeviceID)).Warn("[DEVICE_MANAGER] removing auto-created device")
 			_ = m.storage.DeleteDeviceRecord(rec.DeviceID)
 			continue
 		}
@@ -769,7 +769,7 @@ func (m *DeviceManager) loadFromRegistry(records []*domainChatStorage.DeviceReco
 		// Skip duplicate JIDs
 		if rec.JID != "" {
 			if seenJIDs[rec.JID] {
-				logrus.Warnf("[DEVICE_MANAGER] removing duplicate JID device %s", rec.DeviceID)
+				logrus.WithField("device_ref", safeLogRef("device", rec.DeviceID)).Warn("[DEVICE_MANAGER] removing duplicate JID device")
 				_ = m.storage.DeleteDeviceRecord(rec.DeviceID)
 				continue
 			}
@@ -792,7 +792,7 @@ func (m *DeviceManager) loadFromRegistry(records []*domainChatStorage.DeviceReco
 			m.mu.Lock()
 			delete(m.devices, existingByJID.ID())
 			m.mu.Unlock()
-			logrus.Infof("[DEVICE_MANAGER] replacing in-memory device %s with registry device %s", existingByJID.ID(), rec.DeviceID)
+			logrus.WithFields(logrus.Fields{"existing_device_ref": safeLogRef("device", existingByJID.ID()), "registry_device_ref": safeLogRef("device", rec.DeviceID)}).Info("[DEVICE_MANAGER] replacing in-memory device with registry device")
 		}
 
 		// Create device instance
@@ -882,7 +882,7 @@ func (m *DeviceManager) EnsureClient(ctx context.Context, deviceID string) (*Dev
 		return nil, fmt.Errorf("failed to configure keys store: %w", err)
 	}
 
-	baseLogger := waLog.Stdout(fmt.Sprintf("Client-%s", deviceID), config.WhatsappLogLevel, true)
+	baseLogger := waLog.Stdout(clientLoggerName(deviceID), config.WhatsappLogLevel, true)
 	client := whatsmeow.NewClient(storeDevice, newFilteredLogger(baseLogger))
 	client.EnableAutoReconnect = true
 	client.AutoTrustIdentity = true

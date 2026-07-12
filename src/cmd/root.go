@@ -114,7 +114,6 @@ func initSentry() {
 func initEnvConfig() {
 	observability.Setup("go-whatsapp-multidevice")
 	initSentry()
-	fmt.Println(viper.AllSettings())
 
 	// Application settings
 	if envPort := viper.GetString("app_port"); envPort != "" {

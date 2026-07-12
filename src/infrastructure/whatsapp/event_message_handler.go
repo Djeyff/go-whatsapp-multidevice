@@ -2,7 +2,6 @@ package whatsapp
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -17,14 +16,7 @@ import (
 )
 
 func handleMessage(ctx context.Context, evt *events.Message, chatStorageRepo domainChatStorage.IChatStorageRepository, client *whatsmeow.Client) {
-	// Log message metadata
-	metaParts := buildMessageMetaParts(evt)
-	log.Infof("Received message %s from %s (%s): %+v",
-		evt.Info.ID,
-		evt.Info.SourceString(),
-		strings.Join(metaParts, ", "),
-		evt.Message,
-	)
+	logReceivedMessage(client, evt)
 
 	// Materialize SecretEncryptedMessage{MESSAGE_EDIT} envelope (sent by recent
 	// LID-migrated WhatsApp clients) into the legacy ProtocolMessage{MESSAGE_EDIT}
@@ -35,7 +27,10 @@ func handleMessage(ctx context.Context, evt *events.Message, chatStorageRepo dom
 
 	if isReactionMessage(evt) {
 		if err := chatStorageRepo.CreateReaction(ctx, evt); err != nil {
-			log.Errorf("Failed to store incoming reaction %s: %v", evt.Info.ID, err)
+			logrus.WithFields(logrus.Fields{
+				"event": "reaction_store", "outcome": "failed",
+				"message_ref": safeLogRef("message", string(evt.Info.ID)), "error_class": safeErrorClass(err),
+			}).Warn("Incoming reaction storage failed")
 		}
 
 		handleWebhookForward(ctx, evt, client)
@@ -43,8 +38,10 @@ func handleMessage(ctx context.Context, evt *events.Message, chatStorageRepo dom
 	}
 
 	if err := chatStorageRepo.CreateMessage(ctx, evt); err != nil {
-		// Log storage errors to avoid silent failures that could lead to data loss
-		log.Errorf("Failed to store incoming message %s: %v", evt.Info.ID, err)
+		logrus.WithFields(logrus.Fields{
+			"event": "message_store", "outcome": "failed",
+			"message_ref": safeLogRef("message", string(evt.Info.ID)), "error_class": safeErrorClass(err),
+		}).Warn("Incoming message storage failed")
 	}
 
 	// Handle image message if present
@@ -60,23 +57,6 @@ func handleMessage(ctx context.Context, evt *events.Message, chatStorageRepo dom
 	handleWebhookForward(ctx, evt, client)
 }
 
-func buildMessageMetaParts(evt *events.Message) []string {
-	metaParts := []string{
-		fmt.Sprintf("pushname: %s", evt.Info.PushName),
-		fmt.Sprintf("timestamp: %s", evt.Info.Timestamp),
-	}
-	if evt.Info.Type != "" {
-		metaParts = append(metaParts, fmt.Sprintf("type: %s", evt.Info.Type))
-	}
-	if evt.Info.Category != "" {
-		metaParts = append(metaParts, fmt.Sprintf("category: %s", evt.Info.Category))
-	}
-	if evt.IsViewOnce {
-		metaParts = append(metaParts, "view once")
-	}
-	return metaParts
-}
-
 func handleImageMessage(ctx context.Context, evt *events.Message, client *whatsmeow.Client) {
 	if !config.WhatsappAutoDownloadMedia {
 		return
@@ -86,9 +66,13 @@ func handleImageMessage(ctx context.Context, evt *events.Message, client *whatsm
 	}
 	if img := evt.Message.GetImageMessage(); img != nil {
 		if extracted, err := utils.ExtractMedia(ctx, client, config.PathStorages, img); err != nil {
-			log.Errorf("Failed to download image: %v", err)
+			logrus.WithFields(logrus.Fields{
+				"event": "image_download", "outcome": "failed", "error_class": safeErrorClass(err),
+			}).Warn("Image download failed")
 		} else {
-			log.Infof("Image downloaded to %s", extracted.MediaPath)
+			logrus.WithFields(logrus.Fields{
+				"event": "image_download", "outcome": "stored", "media_ref": safeLogRef("media-path", extracted.MediaPath),
+			}).Info("Image downloaded")
 		}
 	}
 }
@@ -110,9 +94,15 @@ func handleAutoMarkRead(ctx context.Context, evt *events.Message, client *whatsm
 	sender := evt.Info.Sender
 
 	if err := client.MarkRead(ctx, messageIDs, timestamp, chat, sender); err != nil {
-		log.Warnf("Failed to mark message %s as read: %v", evt.Info.ID, err)
+		logrus.WithFields(logrus.Fields{
+			"event": "message_mark_read", "outcome": "failed",
+			"message_ref": safeLogRef("message", string(evt.Info.ID)), "error_class": safeErrorClass(err),
+		}).Warn("Message mark-read failed")
 	} else {
-		log.Debugf("Marked message %s as read", evt.Info.ID)
+		logrus.WithFields(logrus.Fields{
+			"event": "message_mark_read", "outcome": "completed",
+			"message_ref": safeLogRef("message", string(evt.Info.ID)),
+		}).Debug("Message marked read")
 	}
 }
 
@@ -137,7 +127,11 @@ func materializeSecretEditMessage(ctx context.Context, evt *events.Message, clie
 		if k := sem.GetTargetMessageKey(); k != nil {
 			targetID = k.GetID()
 		}
-		log.Warnf("Failed to decrypt SecretEncryptedMessage(MESSAGE_EDIT) for %s (target=%s): %v", evt.Info.ID, targetID, err)
+		logrus.WithFields(logrus.Fields{
+			"event": "secret_edit_decrypt", "outcome": "failed",
+			"message_ref": safeLogRef("message", string(evt.Info.ID)),
+			"target_ref":  safeLogRef("message", targetID), "error_class": safeErrorClass(err),
+		}).Warn("Secret edit decrypt failed")
 		return evt
 	}
 	if decrypted == nil {
@@ -177,7 +171,9 @@ func handleWebhookForward(ctx context.Context, evt *events.Message, client *what
 		webhookCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := forwardMessageToWebhook(webhookCtx, c, e); err != nil {
-			logrus.Error("Failed forward to webhook: ", err)
+			logrus.WithFields(logrus.Fields{
+				"event": "webhook_forward", "outcome": "failed", "error_class": safeErrorClass(err),
+			}).Error("Webhook forward failed")
 		}
 	}(evt, client)
 }

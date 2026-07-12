@@ -156,6 +156,53 @@ func TestPassiveDeviceWebhookCoverage(t *testing.T) {
 	}
 }
 
+func TestHealthInstanceIdentity(t *testing.T) {
+	t.Run("blue", func(t *testing.T) {
+		t.Setenv("GOWA_INSTANCE_ID", "gowa-blue")
+		t.Setenv("RETENA_GOWA_INSTANCE_ID", "")
+		instanceID, ok, reason := gowaHealthInstanceIdentity()
+		if !ok || instanceID != "gowa-blue" || reason != "" {
+			t.Fatalf("blue identity = (%q, %v, %q)", instanceID, ok, reason)
+		}
+	})
+
+	t.Run("main", func(t *testing.T) {
+		t.Setenv("GOWA_INSTANCE_ID", "")
+		t.Setenv("RETENA_GOWA_INSTANCE_ID", "gowa-main")
+		instanceID, ok, reason := gowaHealthInstanceIdentity()
+		if !ok || instanceID != "gowa-main" || reason != "" {
+			t.Fatalf("main identity = (%q, %v, %q)", instanceID, ok, reason)
+		}
+	})
+
+	t.Run("missing", func(t *testing.T) {
+		t.Setenv("GOWA_INSTANCE_ID", "")
+		t.Setenv("RETENA_GOWA_INSTANCE_ID", "")
+		instanceID, ok, reason := gowaHealthInstanceIdentity()
+		if ok || instanceID != "" || reason != "instance_id_missing" {
+			t.Fatalf("missing identity = (%q, %v, %q)", instanceID, ok, reason)
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		t.Setenv("GOWA_INSTANCE_ID", "gowa-canary")
+		t.Setenv("RETENA_GOWA_INSTANCE_ID", "")
+		instanceID, ok, reason := gowaHealthInstanceIdentity()
+		if ok || instanceID != "" || reason != "instance_id_invalid" {
+			t.Fatalf("invalid identity = (%q, %v, %q)", instanceID, ok, reason)
+		}
+	})
+
+	t.Run("conflict", func(t *testing.T) {
+		t.Setenv("GOWA_INSTANCE_ID", "gowa-blue")
+		t.Setenv("RETENA_GOWA_INSTANCE_ID", "gowa-main")
+		instanceID, ok, reason := gowaHealthInstanceIdentity()
+		if ok || instanceID != "" || reason != "instance_id_conflict" {
+			t.Fatalf("conflicting identity = (%q, %v, %q)", instanceID, ok, reason)
+		}
+	})
+}
+
 func TestBasicAuthConfigFailsClosedInProduction(t *testing.T) {
 	prevAppEnv, hadAppEnv := os.LookupEnv("APP_ENV")
 	prevNodeEnv, hadNodeEnv := os.LookupEnv("NODE_ENV")
