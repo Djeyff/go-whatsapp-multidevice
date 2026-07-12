@@ -63,6 +63,22 @@ func passivePresenceHeartbeatAllowed(c *fiber.Ctx) bool {
 	}
 }
 
+func gowaHealthInstanceIdentity() (string, bool, string) {
+	primary := strings.ToLower(strings.TrimSpace(os.Getenv("GOWA_INSTANCE_ID")))
+	compat := strings.ToLower(strings.TrimSpace(os.Getenv("RETENA_GOWA_INSTANCE_ID")))
+	if primary != "" && compat != "" && primary != compat {
+		return "", false, "instance_id_conflict"
+	}
+	instanceID := firstNonEmpty(primary, compat)
+	if instanceID == "" {
+		return "", false, "instance_id_missing"
+	}
+	if instanceID != "gowa-main" && instanceID != "gowa-blue" {
+		return "", false, "instance_id_invalid"
+	}
+	return instanceID, true, ""
+}
+
 // rootCmd represents the base command when called without any subcommands
 var restCmd = &cobra.Command{
 	Use:   "rest",
@@ -335,24 +351,32 @@ func restServer(_ *cobra.Command, _ []string) {
 	// for infrastructure health probes (Kubernetes liveness/readiness, Docker healthcheck, etc.)
 	app.Get("/health", func(c *fiber.Ctx) error {
 		passiveSafety := passiveSafetyStatus()
-		if dm != nil && dm.IsHealthy() && passiveSafety["ok"] == true {
+		instanceID, instanceIdentityOK, instanceIdentityReason := gowaHealthInstanceIdentity()
+		if dm != nil && dm.IsHealthy() && passiveSafety["ok"] == true && instanceIdentityOK {
 			return c.JSON(fiber.Map{
 				"ok":                          true,
 				"service":                     "go-whatsapp-multidevice",
+				"instance_id":                 instanceID,
 				"version":                     config.AppVersion,
 				"commit":                      firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),
 				"chat_storage_schema_ready":   passiveSafety["chat_storage_schema_ready"],
 				"webhook_delivery_configured": passiveSafety["webhook_delivery_configured"],
 			})
 		}
-		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+		response := fiber.Map{
 			"ok":                          false,
 			"service":                     "go-whatsapp-multidevice",
 			"error":                       "Service Unavailable",
 			"chat_storage_schema_ready":   passiveSafety["chat_storage_schema_ready"],
 			"webhook_delivery_configured": passiveSafety["webhook_delivery_configured"],
 			"attention":                   passiveSafety["unsafe_findings"],
-		})
+		}
+		if instanceIdentityOK {
+			response["instance_id"] = instanceID
+		} else {
+			response["instance_identity"] = instanceIdentityReason
+		}
+		return c.Status(http.StatusServiceUnavailable).JSON(response)
 	})
 
 	// Chatwoot webhook - registered before optional app basic auth, but guarded
