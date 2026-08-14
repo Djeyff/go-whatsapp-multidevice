@@ -187,3 +187,133 @@ func TestConsumePairingQRChannelClassifiesTimeout(t *testing.T) {
 		t.Fatalf("terminal snapshot = %#v", snapshot)
 	}
 }
+
+func TestConsumePairingQRChannelExpiresAfterApplicationWindow(t *testing.T) {
+	session := NewPairingSession(context.Background(), "pairing-session-1")
+	events := make(chan whatsmeow.QRChannelItem, 1)
+	events <- whatsmeow.QRChannelItem{Event: whatsmeow.QRChannelEventCode, Code: "raw-1", Timeout: time.Minute}
+
+	providerCleanup := 0
+	ConsumePairingQRChannel(session, events, PairingQRConsumer{
+		WriteImage: func(code string) (string, error) {
+			return "qr-image", nil
+		},
+		MaxLifetime:       20 * time.Millisecond,
+		OnLifetimeExpired: func() { providerCleanup++ },
+	})
+
+	snapshot := session.Snapshot()
+	if snapshot.State != PairingSessionExpired || snapshot.ErrorCode != "qr_window_expired" {
+		t.Fatalf("terminal snapshot = %#v", snapshot)
+	}
+	select {
+	case <-session.Context().Done():
+	default:
+		t.Fatal("application expiry did not cancel the provider QR context")
+	}
+	if providerCleanup != 1 {
+		t.Fatalf("provider cleanup calls = %d, want 1", providerCleanup)
+	}
+}
+
+func TestConsumePairingQRChannelExpiresWhenNoFirstQRArrives(t *testing.T) {
+	session := NewPairingSession(context.Background(), "pairing-session-1")
+	events := make(chan whatsmeow.QRChannelItem)
+	providerCleanup := make(chan struct{}, 1)
+
+	ConsumePairingQRChannel(session, events, PairingQRConsumer{
+		MaxLifetime:       20 * time.Millisecond,
+		OnLifetimeExpired: func() { providerCleanup <- struct{}{} },
+	})
+
+	if snapshot := session.Snapshot(); snapshot.Generation != 0 || snapshot.State != PairingSessionExpired {
+		t.Fatalf("terminal snapshot = %#v", snapshot)
+	}
+	select {
+	case <-providerCleanup:
+	default:
+		t.Fatal("provider cleanup was not called without a first QR")
+	}
+}
+
+func TestConsumePairingQRChannelRejectsCodeAtAbsoluteDeadline(t *testing.T) {
+	session := NewPairingSession(context.Background(), "pairing-session-1")
+	events := make(chan whatsmeow.QRChannelItem, 1)
+	events <- whatsmeow.QRChannelItem{Event: whatsmeow.QRChannelEventCode, Code: "late-code", Timeout: time.Minute}
+	base := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
+	nowCalls := 0
+	writes := 0
+
+	ConsumePairingQRChannel(session, events, PairingQRConsumer{
+		MaxLifetime: time.Minute,
+		Now: func() time.Time {
+			nowCalls++
+			if nowCalls == 1 {
+				return base
+			}
+			return base.Add(time.Minute)
+		},
+		WriteImage: func(code string) (string, error) {
+			writes++
+			return "qr-image", nil
+		},
+	})
+
+	snapshot := session.Snapshot()
+	if snapshot.State != PairingSessionExpired || snapshot.Generation != 0 || writes != 0 {
+		t.Fatalf("late QR was accepted: snapshot=%#v writes=%d", snapshot, writes)
+	}
+}
+
+func TestReleasedPairingSessionDeadlineCannotDisconnectReplacement(t *testing.T) {
+	instance := NewDeviceInstance("device-1", nil, nil)
+	oldSession, _ := instance.GetOrCreatePairingSession(func() *PairingSession {
+		return NewPairingSession(context.Background(), "pairing-session-old")
+	})
+	events := make(chan whatsmeow.QRChannelItem, 1)
+	events <- whatsmeow.QRChannelItem{Event: whatsmeow.QRChannelEventCode, Code: "raw-1", Timeout: time.Minute}
+	providerCleanup := make(chan struct{}, 1)
+	consumerDone := make(chan struct{})
+	go func() {
+		defer close(consumerDone)
+		ConsumePairingQRChannel(oldSession, events, PairingQRConsumer{
+			MaxLifetime: 40 * time.Millisecond,
+			WriteImage: func(code string) (string, error) {
+				return "qr-image", nil
+			},
+			OnLifetimeExpired: func() { providerCleanup <- struct{}{} },
+		})
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for oldSession.Snapshot().Generation == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if oldSession.Snapshot().Generation == 0 {
+		t.Fatal("old session never published its first QR")
+	}
+	if !instance.ReleasePairingSession(oldSession.ID()) {
+		t.Fatal("old pairing session was not released")
+	}
+	newSession, created := instance.GetOrCreatePairingSession(func() *PairingSession {
+		return NewPairingSession(context.Background(), "pairing-session-new")
+	})
+	if !created {
+		t.Fatal("replacement pairing session was not created")
+	}
+
+	select {
+	case <-consumerDone:
+	case <-time.After(time.Second):
+		t.Fatal("old pairing consumer did not stop after release")
+	}
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-providerCleanup:
+		t.Fatal("released session deadline invoked provider cleanup")
+	default:
+	}
+	if newSession.IsTerminal() || instance.PairingSession() != newSession {
+		t.Fatal("old session deadline disturbed the replacement")
+	}
+}

@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,10 +17,47 @@ import (
 type pairingAppStub struct {
 	domainApp.IAppUsecase
 	response domainApp.LoginResponse
+	err      error
 }
 
 func (s *pairingAppStub) Login(context.Context, string) (domainApp.LoginResponse, error) {
-	return s.response, nil
+	return s.response, s.err
+}
+
+func TestLoginReturnsStructuredExpiredPairingSnapshot(t *testing.T) {
+	stub := &pairingAppStub{
+		response: domainApp.LoginResponse{
+			PairingSessionID: "pairing-session-1",
+			QRGeneration:     6,
+			State:            string(whatsapp.PairingSessionExpired),
+			ErrorCode:        "qr_window_expired",
+		},
+		err: errors.New("pairing session expired: qr_window_expired"),
+	}
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("device", whatsapp.NewDeviceInstance("device-1", nil, nil))
+		return c.Next()
+	})
+	controller := App{Service: stub}
+	app.Get("/app/login", controller.Login)
+
+	response, err := app.Test(httptest.NewRequest(http.MethodGet, "/app/login", nil))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+	var payload struct {
+		Results map[string]any `json:"results"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Results["state"] != "expired" || payload.Results["error_code"] != "qr_window_expired" {
+		t.Fatalf("expired result = %#v", payload.Results)
+	}
 }
 
 func TestLoginReturnsGenerationAwarePairingSnapshot(t *testing.T) {

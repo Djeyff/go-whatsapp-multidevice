@@ -10,9 +10,11 @@ import (
 )
 
 type PairingQRConsumer struct {
-	WriteImage       func(code string) (string, error)
-	RemoveImageAfter func(path string, after time.Duration)
-	Now              func() time.Time
+	WriteImage        func(code string) (string, error)
+	RemoveImageAfter  func(path string, after time.Duration)
+	Now               func() time.Time
+	MaxLifetime       time.Duration
+	OnLifetimeExpired func()
 }
 
 func ConsumePairingQRChannel(session *PairingSession, events <-chan whatsmeow.QRChannelItem, consumer PairingQRConsumer) {
@@ -24,7 +26,39 @@ func ConsumePairingQRChannel(session *PairingSession, events <-chan whatsmeow.QR
 		now = time.Now
 	}
 
-	for event := range events {
+	var lifetimeTimer *time.Timer
+	var lifetimeExpired <-chan time.Time
+	var lifetimeDeadline time.Time
+	if consumer.MaxLifetime > 0 {
+		lifetimeDeadline = now().Add(consumer.MaxLifetime)
+		lifetimeTimer = time.NewTimer(consumer.MaxLifetime)
+		lifetimeExpired = lifetimeTimer.C
+		defer lifetimeTimer.Stop()
+	}
+
+	for {
+		var event whatsmeow.QRChannelItem
+		var ok bool
+		select {
+		case <-lifetimeExpired:
+			expirePairingSession(session, consumer, now())
+			return
+		case <-session.Context().Done():
+			return
+		case event, ok = <-events:
+			if !ok {
+				if !session.IsTerminal() {
+					session.MarkTerminal(PairingSessionFailed, "qr_channel_closed", now())
+				}
+				return
+			}
+		}
+		eventAt := now()
+		if !lifetimeDeadline.IsZero() && !eventAt.Before(lifetimeDeadline) {
+			expirePairingSession(session, consumer, eventAt)
+			return
+		}
+
 		switch event.Event {
 		case whatsmeow.QRChannelEventCode:
 			if consumer.WriteImage == nil {
@@ -36,7 +70,7 @@ func ConsumePairingQRChannel(session *PairingSession, events <-chan whatsmeow.QR
 				session.MarkTerminal(PairingSessionFailed, "qr_image_write_failed", now())
 				return
 			}
-			session.PublishQR(imagePath, now(), event.Timeout)
+			session.PublishQR(imagePath, eventAt, event.Timeout)
 			if consumer.RemoveImageAfter != nil {
 				consumer.RemoveImageAfter(imagePath, event.Timeout)
 			}
@@ -65,9 +99,12 @@ func ConsumePairingQRChannel(session *PairingSession, events <-chan whatsmeow.QR
 			return
 		}
 	}
+}
 
-	if !session.IsTerminal() {
-		session.MarkTerminal(PairingSessionFailed, "qr_channel_closed", now())
+func expirePairingSession(session *PairingSession, consumer PairingQRConsumer, terminalAt time.Time) {
+	_, transitioned := session.TryMarkTerminal(PairingSessionExpired, "qr_window_expired", terminalAt)
+	if transitioned && consumer.OnLifetimeExpired != nil {
+		consumer.OnLifetimeExpired()
 	}
 }
 
@@ -195,6 +232,11 @@ func pairingSessionReadiness(snapshot PairingSessionSnapshot) error {
 }
 
 func (s *PairingSession) MarkTerminal(state PairingSessionState, errorCode string, terminalAt time.Time) PairingSessionSnapshot {
+	snapshot, _ := s.TryMarkTerminal(state, errorCode, terminalAt)
+	return snapshot
+}
+
+func (s *PairingSession) TryMarkTerminal(state PairingSessionState, errorCode string, terminalAt time.Time) (PairingSessionSnapshot, bool) {
 	if !isTerminalPairingSessionState(state) {
 		state = PairingSessionFailed
 		if errorCode == "" {
@@ -203,17 +245,19 @@ func (s *PairingSession) MarkTerminal(state PairingSessionState, errorCode strin
 	}
 
 	s.mu.Lock()
+	transitioned := false
 	if !isTerminalPairingSessionState(s.state) {
 		s.state = state
 		s.errorCode = errorCode
 		s.terminalAt = terminalAt
+		transitioned = true
 	}
 	snapshot := s.snapshotLocked()
 	s.mu.Unlock()
 
 	s.readyOnce.Do(func() { close(s.ready) })
 	s.cancel()
-	return snapshot
+	return snapshot, transitioned
 }
 
 func (s *PairingSession) Snapshot() PairingSessionSnapshot {

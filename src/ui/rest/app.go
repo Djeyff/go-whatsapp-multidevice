@@ -37,7 +37,9 @@ func (handler *App) Login(c *fiber.Ctx) error {
 	}
 
 	response, err := handler.Service.Login(c.UserContext(), device.ID())
-	utils.PanicIfNeeded(err)
+	if err != nil && !(response.State == string(whatsapp.PairingSessionExpired) && response.ErrorCode == "qr_window_expired") {
+		utils.PanicIfNeeded(err)
+	}
 
 	return c.JSON(utils.ResponseData{
 		Status:  200,

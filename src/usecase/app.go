@@ -27,6 +27,8 @@ type serviceApp struct {
 	deviceManager   *whatsapp.DeviceManager
 }
 
+const retenaPairingSessionMaxLifetime = 3 * time.Minute
+
 func pairPhoneAfterReadiness(ctx context.Context, session *whatsapp.PairingSession, pair func(context.Context) (string, error)) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("pairing session is unavailable")
@@ -51,7 +53,7 @@ func NewAppService(chatStorageRepo domainChatStorage.IChatStorageRepository, dev
 	}
 }
 
-func (service *serviceApp) getOrStartPairingSession(instance *whatsapp.DeviceInstance, client *whatsmeow.Client) (*whatsapp.PairingSession, error) {
+func (service *serviceApp) getOrStartPairingSession(instance *whatsapp.DeviceInstance, client *whatsmeow.Client, maxLifetime time.Duration) (*whatsapp.PairingSession, error) {
 	session, created := instance.GetOrCreatePairingSession(func() *whatsapp.PairingSession {
 		return whatsapp.NewPairingSession(context.Background(), fiberUtils.UUIDv4())
 	})
@@ -85,6 +87,11 @@ func (service *serviceApp) getOrStartPairingSession(instance *whatsapp.DeviceIns
 
 	go func() {
 		whatsapp.ConsumePairingQRChannel(session, events, whatsapp.PairingQRConsumer{
+			MaxLifetime: maxLifetime,
+			OnLifetimeExpired: func() {
+				client.Disconnect()
+				instance.UpdateStateFromClient()
+			},
 			WriteImage: func(code string) (string, error) {
 				path := fmt.Sprintf("%s/scan-qr-%s.png", config.PathQrCode, fiberUtils.UUIDv4())
 				if err := pkgUtils.WriteQRWithLogo(code, 512, path); err != nil {
@@ -154,7 +161,7 @@ func (service *serviceApp) Login(ctx context.Context, deviceID string) (response
 		return response, pkgError.ErrAlreadyLoggedIn
 	}
 
-	session, err := service.getOrStartPairingSession(instance, client)
+	session, err := service.getOrStartPairingSession(instance, client, retenaPairingSessionMaxLifetime)
 	if err != nil {
 		return response, err
 	}
@@ -180,7 +187,7 @@ func (service *serviceApp) LoginWithCode(ctx context.Context, deviceID string, p
 		return loginCode, pkgError.ErrAlreadyLoggedIn
 	}
 
-	session, err := service.getOrStartPairingSession(instance, client)
+	session, err := service.getOrStartPairingSession(instance, client, 0)
 	if err != nil {
 		whatsapp.NotifySessionEvent(context.Background(), instance, "reconnect_blocked", "attention", "pairing_code_connect_failed", "WhatsApp pairing-code login could not establish a connection")
 		return loginCode, err
