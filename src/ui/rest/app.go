@@ -18,6 +18,7 @@ type App struct {
 func InitRestApp(app fiber.Router, service domainApp.IAppUsecase) App {
 	rest := App{Service: service}
 	app.Get("/app/login", rest.Login)
+	app.Get("/app/login/retry", rest.RetryLogin)
 	app.Get("/app/login-with-code", rest.LoginWithCode)
 	app.Get("/app/passkey", rest.PasskeyChallenge)
 	app.Post("/app/passkey/response", rest.PasskeyResponse)
@@ -31,12 +32,25 @@ func InitRestApp(app fiber.Router, service domainApp.IAppUsecase) App {
 }
 
 func (handler *App) Login(c *fiber.Ctx) error {
+	return handler.login(c, false)
+}
+
+func (handler *App) RetryLogin(c *fiber.Ctx) error {
+	return handler.login(c, true)
+}
+
+func (handler *App) login(c *fiber.Ctx, retryExpired bool) error {
 	device, err := getDeviceInstance(c)
 	if err != nil {
 		return err
 	}
 
-	response, err := handler.Service.Login(c.UserContext(), device.ID())
+	var response domainApp.LoginResponse
+	if retryExpired {
+		response, err = handler.Service.RetryLogin(c.UserContext(), device.ID())
+	} else {
+		response, err = handler.Service.Login(c.UserContext(), device.ID())
+	}
 	if err != nil && !(response.State == string(whatsapp.PairingSessionExpired) && response.ErrorCode == "qr_window_expired") {
 		utils.PanicIfNeeded(err)
 	}
