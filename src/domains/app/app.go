@@ -9,6 +9,7 @@ import (
 
 type IAppUsecase interface {
 	Login(ctx context.Context, deviceID string) (response LoginResponse, err error)
+	RetryLogin(ctx context.Context, deviceID string) (response LoginResponse, err error)
 	LoginWithCode(ctx context.Context, deviceID string, phoneNumber string) (loginCode string, err error)
 	PasskeyChallenge(ctx context.Context, deviceID string) (response PasskeyChallengeResponse, err error)
 	PasskeyResponse(ctx context.Context, deviceID string, assertion *types.WebAuthnResponse) (err error)

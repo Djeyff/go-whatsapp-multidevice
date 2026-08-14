@@ -16,11 +16,17 @@ import (
 
 type pairingAppStub struct {
 	domainApp.IAppUsecase
-	response domainApp.LoginResponse
-	err      error
+	response   domainApp.LoginResponse
+	err        error
+	retryCalls int
 }
 
 func (s *pairingAppStub) Login(context.Context, string) (domainApp.LoginResponse, error) {
+	return s.response, s.err
+}
+
+func (s *pairingAppStub) RetryLogin(context.Context, string) (domainApp.LoginResponse, error) {
+	s.retryCalls++
 	return s.response, s.err
 }
 
@@ -57,6 +63,29 @@ func TestLoginReturnsStructuredExpiredPairingSnapshot(t *testing.T) {
 	}
 	if payload.Results["state"] != "expired" || payload.Results["error_code"] != "qr_window_expired" {
 		t.Fatalf("expired result = %#v", payload.Results)
+	}
+}
+
+func TestRetryLoginUsesExplicitRetryService(t *testing.T) {
+	stub := &pairingAppStub{response: domainApp.LoginResponse{
+		PairingSessionID: "pairing-session-retry",
+		QRGeneration:     1,
+		State:            "qr_ready",
+	}}
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("device", whatsapp.NewDeviceInstance("device-1", nil, nil))
+		return c.Next()
+	})
+	controller := App{Service: stub}
+	app.Get("/app/login/retry", controller.RetryLogin)
+
+	response, err := app.Test(httptest.NewRequest(http.MethodGet, "/app/login/retry", nil))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || stub.retryCalls != 1 {
+		t.Fatalf("status/retry calls = %d/%d, want 200/1", response.StatusCode, stub.retryCalls)
 	}
 }
 

@@ -101,6 +101,95 @@ func TestTerminalPairingSessionCanBeReplaced(t *testing.T) {
 	}
 }
 
+func TestExpiredPairingSessionRequiresExplicitLoginRetry(t *testing.T) {
+	instance := NewDeviceInstance("device-1", nil, nil)
+	first, _ := instance.GetOrCreatePairingSession(func() *PairingSession {
+		return NewPairingSession(context.Background(), "pairing-session-1")
+	})
+	first.MarkTerminal(PairingSessionExpired, "qr_window_expired", time.Now())
+
+	retained, created := instance.GetOrCreatePairingSessionForLogin(func() *PairingSession {
+		return NewPairingSession(context.Background(), "pairing-session-implicit")
+	}, false)
+	if created || retained != first {
+		t.Fatal("normal login poll replaced an expired pairing session")
+	}
+
+	replacement, created := instance.GetOrCreatePairingSessionForLogin(func() *PairingSession {
+		return NewPairingSession(context.Background(), "pairing-session-retry")
+	}, true)
+	if !created || replacement == first || replacement.ID() != "pairing-session-retry" {
+		t.Fatal("explicit login retry did not replace the expired pairing session")
+	}
+	reused, created := instance.GetOrCreatePairingSessionForLogin(func() *PairingSession {
+		return NewPairingSession(context.Background(), "pairing-session-second-retry")
+	}, true)
+	if created || reused != replacement {
+		t.Fatal("a repeated retry replaced the already-active pairing session")
+	}
+}
+
+func TestExplicitExpiredRetryRefusesOtherPairingStates(t *testing.T) {
+	for _, state := range []PairingSessionState{
+		PairingSessionStarting,
+		PairingSessionQRReady,
+		PairingSessionPaired,
+		PairingSessionFailed,
+		PairingSessionCanceled,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			instance := NewDeviceInstance("device-1", nil, nil)
+			first, _ := instance.GetOrCreatePairingSession(func() *PairingSession {
+				return NewPairingSession(context.Background(), "pairing-session-1")
+			})
+			switch state {
+			case PairingSessionQRReady:
+				first.PublishQR("qr-image", time.Now(), time.Minute)
+			case PairingSessionStarting:
+			default:
+				first.MarkTerminal(state, "test_terminal", time.Now())
+			}
+
+			retained, created := instance.GetOrCreatePairingSessionForLogin(func() *PairingSession {
+				return NewPairingSession(context.Background(), "pairing-session-replacement")
+			}, true)
+			if created || retained != first {
+				t.Fatalf("explicit expired retry replaced %s session", state)
+			}
+		})
+	}
+}
+
+func TestNormalLoginRetainsExpiredButReplacesOtherReplaceableStates(t *testing.T) {
+	for _, state := range []PairingSessionState{
+		PairingSessionPaired,
+		PairingSessionExpired,
+		PairingSessionFailed,
+		PairingSessionCanceled,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			instance := NewDeviceInstance("device-1", nil, nil)
+			first, _ := instance.GetOrCreatePairingSession(func() *PairingSession {
+				return NewPairingSession(context.Background(), "pairing-session-1")
+			})
+			first.MarkTerminal(state, "test_terminal", time.Now())
+
+			result, created := instance.GetOrCreatePairingSessionForLogin(func() *PairingSession {
+				return NewPairingSession(context.Background(), "pairing-session-replacement")
+			}, false)
+			if state == PairingSessionExpired {
+				if created || result != first {
+					t.Fatal("normal login replaced the expired session")
+				}
+				return
+			}
+			if !created || result == first {
+				t.Fatalf("normal login did not preserve replacement behavior for %s", state)
+			}
+		})
+	}
+}
+
 func TestPairedSessionCanBeReplacedAfterClientDisconnects(t *testing.T) {
 	instance := NewDeviceInstance("device-1", nil, nil)
 	first, _ := instance.GetOrCreatePairingSession(func() *PairingSession {

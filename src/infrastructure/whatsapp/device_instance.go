@@ -157,6 +157,27 @@ func (d *DeviceInstance) GetOrCreatePairingSession(factory func() *PairingSessio
 	return d.pairingSession, d.pairingSession != nil
 }
 
+func (d *DeviceInstance) GetOrCreatePairingSessionForLogin(factory func() *PairingSession, retryExpired bool) (*PairingSession, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.pairingSession != nil {
+		snapshot := d.pairingSession.Snapshot()
+		if retryExpired {
+			if snapshot.State != PairingSessionExpired {
+				return d.pairingSession, false
+			}
+		} else if snapshot.State == PairingSessionExpired || !d.pairingSession.CanReplace() {
+			return d.pairingSession, false
+		}
+	}
+	if factory == nil {
+		return nil, false
+	}
+	d.pairingSession = factory()
+	return d.pairingSession, d.pairingSession != nil
+}
+
 func (d *DeviceInstance) PairingSession() *PairingSession {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
