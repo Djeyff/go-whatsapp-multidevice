@@ -188,7 +188,15 @@ func buildFromFields(ctx context.Context, client *whatsmeow.Client, evt *events.
 	}
 
 	normalizedSenderJID := NormalizeJIDFromLID(ctx, senderJID, client)
-	payload["from"] = normalizedSenderJID.ToNonAD().String()
+	normalizedSenderJID = normalizedSenderJID.ToNonAD()
+	payload["from"] = normalizedSenderJID.String()
+	if normalizedSenderJID.Server == "lid" {
+		// Preserve the opaque identity for correlation, but never present it as a
+		// telephone number to downstream processor consumers.
+		payload["from_unresolved_lid"] = true
+	} else {
+		payload["from_phone"] = normalizedSenderJID.User
+	}
 }
 
 func buildMessageBody(ctx context.Context, client *whatsmeow.Client, evt *events.Message, payload map[string]any) error {
@@ -275,6 +283,14 @@ func buildOptionalFields(ctx context.Context, client *whatsmeow.Client, evt *eve
 
 func buildMediaFields(ctx context.Context, client *whatsmeow.Client, msg *waE2E.Message, payload map[string]any) error {
 	if audioMedia := msg.GetAudioMessage(); audioMedia != nil {
+		payload["audio_mime_type"] = audioMedia.GetMimetype()
+		payload["audio_duration_seconds"] = audioMedia.GetSeconds()
+		payload["audio_ptt"] = audioMedia.GetPTT()
+		payload["media_provenance"] = map[string]any{
+			"mime_type":        audioMedia.GetMimetype(),
+			"duration_seconds": audioMedia.GetSeconds(),
+			"ptt":              audioMedia.GetPTT(),
+		}
 		if config.WhatsappAutoDownloadMedia {
 			extracted, err := utils.ExtractMedia(ctx, client, config.PathMedia, audioMedia)
 			if err != nil {

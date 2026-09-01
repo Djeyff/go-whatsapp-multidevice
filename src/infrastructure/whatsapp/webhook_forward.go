@@ -126,6 +126,10 @@ func forwardPayloadToConfiguredWebhooks(ctx context.Context, payload map[string]
 	if chatwootAllowed {
 		go forwardToChatwoot(ctx, payload, eventName)
 	}
+	if webhookErr != nil {
+		deviceID, repo := chatwootLinkStorageFromContext(ctx)
+		enqueueProcessorForwardRetry(repo, deviceID, eventName, payload, webhookErr)
+	}
 
 	return webhookErr
 }
@@ -914,6 +918,93 @@ func truncateChatwootForwardError(err error) string {
 		return msg[:2000]
 	}
 	return msg
+}
+
+func processorForwardMessageID(payload map[string]any) string {
+	data, ok := payload["payload"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	messageID, _ := data["id"].(string)
+	return strings.TrimSpace(messageID)
+}
+
+func enqueueProcessorForwardRetry(repo domainChatStorage.IChatStorageRepository, deviceID, eventName string, payload map[string]any, forwardErr error) bool {
+	if repo == nil || eventName != "message" || strings.TrimSpace(deviceID) == "" || forwardErr == nil {
+		return false
+	}
+	sessionID, _ := payload["session_id"].(string)
+	messageID := processorForwardMessageID(payload)
+	if strings.TrimSpace(sessionID) == "" || messageID == "" {
+		return false
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	event := &domainChatStorage.ProcessorForwardEvent{
+		DeviceID: deviceID, SessionID: sessionID, EventName: eventName, WhatsAppMessageID: messageID,
+		PayloadJSON: string(payloadJSON), LastError: truncateChatwootForwardError(forwardErr),
+		NextAttemptAt: time.Now().Add(chatwootForwardRetryDelay(0)),
+	}
+	if err := repo.EnqueueProcessorForwardEvent(event); err != nil {
+		logrus.Errorf("Processor: failed to enqueue forward retry for %s: %v", messageID, err)
+		return false
+	}
+	logrus.Warnf("Processor: queued forward retry for WhatsApp message %s", messageID)
+	return true
+}
+
+func processProcessorForwardRetryEvent(event *domainChatStorage.ProcessorForwardEvent) error {
+	if event == nil {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+		return fmt.Errorf("decode processor retry payload %d: %w", event.ID, err)
+	}
+	return forwardPayloadToConfiguredWebhooks(context.Background(), payload, event.EventName)
+}
+
+func processDueProcessorForwardRetries(repo domainChatStorage.IChatStorageRepository) {
+	if repo == nil {
+		return
+	}
+	events, err := repo.ListDueProcessorForwardEvents(time.Now(), 20)
+	if err != nil {
+		logrus.Errorf("Processor: failed to list forward retry queue: %v", err)
+		return
+	}
+	for _, event := range events {
+		if err := processProcessorForwardRetryEvent(event); err != nil {
+			nextAttempt := time.Now().Add(chatwootForwardRetryDelay(event.Attempts + 1))
+			if markErr := repo.MarkProcessorForwardEventFailed(event.ID, truncateChatwootForwardError(err), nextAttempt); markErr != nil {
+				logrus.Errorf("Processor: failed to reschedule retry job %d: %v", event.ID, markErr)
+			}
+			continue
+		}
+		if err := repo.MarkProcessorForwardEventDone(event.ID); err != nil {
+			logrus.Errorf("Processor: failed to delete completed retry job %d: %v", event.ID, err)
+		}
+	}
+}
+
+var processorForwardRetryWorkerOnce sync.Once
+
+func StartProcessorForwardRetryWorker(repo domainChatStorage.IChatStorageRepository) {
+	if repo == nil {
+		return
+	}
+	processorForwardRetryWorkerOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				processDueProcessorForwardRetries(repo)
+				<-ticker.C
+			}
+		}()
+	})
 }
 
 // isRetryableChatwootForwardEvent reports whether a forward event is durable

@@ -89,6 +89,23 @@ type ChatwootForwardEvent struct {
 	UpdatedAt         time.Time `db:"updated_at"`
 }
 
+// ProcessorForwardEvent is the durable, device-and-session-scoped retry
+// contract for the Retena processor webhook. It deliberately stores the
+// original envelope so retry preserves message provenance and media metadata.
+type ProcessorForwardEvent struct {
+	ID                int64     `db:"id"`
+	DeviceID          string    `db:"device_id"`
+	SessionID         string    `db:"session_id"`
+	EventName         string    `db:"event_name"`
+	WhatsAppMessageID string    `db:"wa_message_id"`
+	PayloadJSON       string    `db:"payload_json"`
+	Attempts          int       `db:"attempts"`
+	LastError         string    `db:"last_error"`
+	NextAttemptAt     time.Time `db:"next_attempt_at"`
+	CreatedAt         time.Time `db:"created_at"`
+	UpdatedAt         time.Time `db:"updated_at"`
+}
+
 // MediaInfo represents downloadable media information
 type MediaInfo struct {
 	MessageID     string

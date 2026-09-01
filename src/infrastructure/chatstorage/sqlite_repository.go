@@ -928,6 +928,64 @@ func (r *SQLiteRepository) MarkChatwootForwardEventDone(id int64) error {
 	return err
 }
 
+func (r *SQLiteRepository) EnqueueProcessorForwardEvent(event *domainChatStorage.ProcessorForwardEvent) error {
+	if event == nil || strings.TrimSpace(event.DeviceID) == "" || strings.TrimSpace(event.SessionID) == "" || strings.TrimSpace(event.EventName) == "" || strings.TrimSpace(event.WhatsAppMessageID) == "" || strings.TrimSpace(event.PayloadJSON) == "" {
+		return fmt.Errorf("processor forward event requires device id, session id, event name, whatsapp message id, and payload")
+	}
+	now := time.Now()
+	if event.NextAttemptAt.IsZero() {
+		event.NextAttemptAt = now
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = now
+	}
+	event.UpdatedAt = now
+	_, err := r.db.Exec(`
+		INSERT INTO processor_forward_queue (device_id, session_id, event_name, wa_message_id, payload_json, attempts, last_error, next_attempt_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(device_id, session_id, event_name, wa_message_id) DO UPDATE SET
+			payload_json = excluded.payload_json, last_error = excluded.last_error,
+			next_attempt_at = excluded.next_attempt_at, updated_at = excluded.updated_at
+	`, event.DeviceID, event.SessionID, event.EventName, event.WhatsAppMessageID, event.PayloadJSON, event.Attempts, event.LastError, event.NextAttemptAt, event.CreatedAt, event.UpdatedAt)
+	return err
+}
+
+func (r *SQLiteRepository) ListDueProcessorForwardEvents(now time.Time, limit int) ([]*domainChatStorage.ProcessorForwardEvent, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.Query(`SELECT id, device_id, session_id, event_name, wa_message_id, payload_json, attempts, last_error, next_attempt_at, created_at, updated_at FROM processor_forward_queue WHERE next_attempt_at <= ? ORDER BY next_attempt_at ASC, id ASC LIMIT ?`, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]*domainChatStorage.ProcessorForwardEvent, 0)
+	for rows.Next() {
+		event := &domainChatStorage.ProcessorForwardEvent{}
+		if err := rows.Scan(&event.ID, &event.DeviceID, &event.SessionID, &event.EventName, &event.WhatsAppMessageID, &event.PayloadJSON, &event.Attempts, &event.LastError, &event.NextAttemptAt, &event.CreatedAt, &event.UpdatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func (r *SQLiteRepository) MarkProcessorForwardEventFailed(id int64, lastError string, nextAttemptAt time.Time) error {
+	if id == 0 {
+		return fmt.Errorf("processor forward event id is required")
+	}
+	_, err := r.db.Exec(`UPDATE processor_forward_queue SET attempts = attempts + 1, last_error = ?, next_attempt_at = ?, updated_at = ? WHERE id = ?`, lastError, nextAttemptAt, time.Now(), id)
+	return err
+}
+
+func (r *SQLiteRepository) MarkProcessorForwardEventDone(id int64) error {
+	if id == 0 {
+		return fmt.Errorf("processor forward event id is required")
+	}
+	_, err := r.db.Exec(`DELETE FROM processor_forward_queue WHERE id = ?`, id)
+	return err
+}
+
 // getCount is a private helper for count queries
 func (r *SQLiteRepository) getCount(query string, args ...any) (int64, error) {
 	var count int64
@@ -1031,6 +1089,11 @@ func (r *SQLiteRepository) TruncateAllChats() error {
 		return fmt.Errorf("failed to delete chatwoot forward queue: %w", err)
 	}
 
+	_, err = tx.Exec("DELETE FROM processor_forward_queue")
+	if err != nil {
+		return fmt.Errorf("failed to delete processor forward queue: %w", err)
+	}
+
 	// Delete messages after dependent rows to keep cleanup explicit.
 	_, err = tx.Exec("DELETE FROM messages")
 	if err != nil {
@@ -1072,6 +1135,10 @@ func (r *SQLiteRepository) DeleteDeviceData(deviceID string) error {
 
 	if _, err := tx.Exec(`DELETE FROM chatwoot_forward_queue WHERE device_id = ?`, deviceID); err != nil {
 		return fmt.Errorf("failed to delete device chatwoot forward queue: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM processor_forward_queue WHERE device_id = ?`, deviceID); err != nil {
+		return fmt.Errorf("failed to delete device processor forward queue: %w", err)
 	}
 
 	// Delete messages after dependent rows via direct device_id filter.
@@ -2027,7 +2094,7 @@ func (r *SQLiteRepository) StoreSentMessageWithContext(ctx context.Context, mess
 // _____________________________________________________________________________________________________________________
 
 // CurrentSchemaVersion is the highest schema version understood by this binary.
-const CurrentSchemaVersion = 34
+const CurrentSchemaVersion = 36
 
 var requiredSchemaColumns = map[string][]string{
 	"chats": {
@@ -2061,6 +2128,10 @@ var requiredSchemaColumns = map[string][]string{
 		"id", "device_id", "event_name", "wa_message_id", "payload_json", "attempts",
 		"last_error", "next_attempt_at", "created_at", "updated_at",
 	},
+	"processor_forward_queue": {
+		"id", "device_id", "session_id", "event_name", "wa_message_id", "payload_json", "attempts",
+		"last_error", "next_attempt_at", "created_at", "updated_at",
+	},
 }
 
 var requiredSchemaIndexes = []string{
@@ -2083,6 +2154,7 @@ var requiredSchemaIndexes = []string{
 	"idx_chatwoot_links_conversation",
 	"idx_chatwoot_links_unread",
 	"idx_chatwoot_forward_queue_due",
+	"idx_processor_forward_queue_due",
 }
 
 // InitializeSchema creates, migrates, and validates the database schema. The
@@ -2444,5 +2516,24 @@ func (r *SQLiteRepository) getMigrations() []string {
 
 		// Migration 34: Store per-device webhook TLS verification override
 		`ALTER TABLE devices ADD COLUMN webhook_insecure_skip_verify BOOLEAN DEFAULT FALSE`,
+
+		// Migration 35: Persist processor webhook retries separately from Chatwoot.
+		`CREATE TABLE IF NOT EXISTS processor_forward_queue (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			device_id VARCHAR(255) NOT NULL DEFAULT '',
+			session_id VARCHAR(255) NOT NULL DEFAULT '',
+			event_name VARCHAR(80) NOT NULL DEFAULT '',
+			wa_message_id VARCHAR(255) NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			next_attempt_at TIMESTAMP NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(device_id, session_id, event_name, wa_message_id)
+		)`,
+
+		// Migration 36: Fetch due processor retries in deterministic order.
+		`CREATE INDEX IF NOT EXISTS idx_processor_forward_queue_due ON processor_forward_queue(next_attempt_at, id)`,
 	}
 }

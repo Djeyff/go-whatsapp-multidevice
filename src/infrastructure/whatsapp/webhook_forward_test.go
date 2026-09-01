@@ -17,6 +17,44 @@ type chatwootForwardQueueTestRepo struct {
 	events []*chatstorage.ChatwootForwardEvent
 }
 
+type processorForwardQueueTestRepo struct {
+	chatstorage.IChatStorageRepository
+	events []*chatstorage.ProcessorForwardEvent
+}
+
+func (r *processorForwardQueueTestRepo) EnqueueProcessorForwardEvent(event *chatstorage.ProcessorForwardEvent) error {
+	cloned := *event
+	r.events = append(r.events, &cloned)
+	return nil
+}
+
+func TestEnqueueProcessorForwardRetryPreservesDeviceSessionAndVoiceEnvelope(t *testing.T) {
+	repo := &processorForwardQueueTestRepo{}
+	payload := map[string]any{
+		"device_id":  "device-a@s.whatsapp.net",
+		"session_id": "session-a",
+		"payload": map[string]any{
+			"id":                     "voice-message-a",
+			"audio_mime_type":        "audio/ogg; codecs=opus",
+			"audio_duration_seconds": uint32(12),
+			"audio_ptt":              true,
+		},
+	}
+	if !enqueueProcessorForwardRetry(repo, "device-a@s.whatsapp.net", "message", payload, errors.New("temporary downstream failure")) {
+		t.Fatal("expected durable processor retry to be queued")
+	}
+	if len(repo.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(repo.events))
+	}
+	event := repo.events[0]
+	if event.DeviceID != "device-a@s.whatsapp.net" || event.SessionID != "session-a" || event.EventName != "message" || event.WhatsAppMessageID != "voice-message-a" {
+		t.Fatalf("processor retry identity = %#v", event)
+	}
+	if !strings.Contains(event.PayloadJSON, "audio_mime_type") || !strings.Contains(event.PayloadJSON, "audio_ptt") {
+		t.Fatalf("processor retry payload lost voice provenance: %s", event.PayloadJSON)
+	}
+}
+
 func (r *chatwootForwardQueueTestRepo) EnqueueChatwootForwardEvent(event *chatstorage.ChatwootForwardEvent) error {
 	cloned := *event
 	r.events = append(r.events, &cloned)
