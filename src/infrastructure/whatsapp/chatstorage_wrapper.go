@@ -188,6 +188,25 @@ func (r *deviceChatStorage) MarkChatwootForwardEventDone(id int64) error {
 	return r.base.MarkChatwootForwardEventDone(id)
 }
 
+func (r *deviceChatStorage) EnqueueProcessorForwardEvent(event *domainChatStorage.ProcessorForwardEvent) error {
+	if event != nil && event.DeviceID == "" {
+		event.DeviceID = r.deviceID
+	}
+	return r.base.EnqueueProcessorForwardEvent(event)
+}
+
+func (r *deviceChatStorage) ListDueProcessorForwardEvents(now time.Time, limit int) ([]*domainChatStorage.ProcessorForwardEvent, error) {
+	return r.base.ListDueProcessorForwardEvents(now, limit)
+}
+
+func (r *deviceChatStorage) MarkProcessorForwardEventFailed(id int64, lastError string, nextAttemptAt time.Time) error {
+	return r.base.MarkProcessorForwardEventFailed(id, lastError, nextAttemptAt)
+}
+
+func (r *deviceChatStorage) MarkProcessorForwardEventDone(id int64) error {
+	return r.base.MarkProcessorForwardEventDone(id)
+}
+
 func (r *deviceChatStorage) StoreSentMessageWithContext(ctx context.Context, messageID string, senderJID string, recipientJID string, content string, timestamp time.Time, msg *waE2E.Message) error {
 	if _, ok := DeviceFromContext(ctx); !ok && r.deviceID != "" {
 		ctx = ContextWithDevice(ctx, NewDeviceInstance(r.deviceID, nil, nil))

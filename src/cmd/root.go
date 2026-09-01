@@ -481,6 +481,7 @@ func initApp() {
 		logrus.Fatalf("failed to initialize chat storage schema: %v", err)
 	}
 	chatStorageSchemaReady.Store(true)
+	whatsapp.StartProcessorForwardRetryWorker(chatStorageRepo)
 
 	whatsappDB := whatsapp.InitWaDB(ctx, config.DBURI)
 	var keysDB *sqlstore.Container

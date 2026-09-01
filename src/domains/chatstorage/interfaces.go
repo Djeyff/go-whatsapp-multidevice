@@ -45,6 +45,10 @@ type IChatStorageRepository interface {
 	ListDueChatwootForwardEvents(now time.Time, limit int) ([]*ChatwootForwardEvent, error)
 	MarkChatwootForwardEventFailed(id int64, lastError string, nextAttemptAt time.Time) error
 	MarkChatwootForwardEventDone(id int64) error
+	EnqueueProcessorForwardEvent(event *ProcessorForwardEvent) error
+	ListDueProcessorForwardEvents(now time.Time, limit int) ([]*ProcessorForwardEvent, error)
+	MarkProcessorForwardEventFailed(id int64, lastError string, nextAttemptAt time.Time) error
+	MarkProcessorForwardEventDone(id int64) error
 
 	// Statistics
 	GetChatMessageCount(chatJID string) (int64, error)

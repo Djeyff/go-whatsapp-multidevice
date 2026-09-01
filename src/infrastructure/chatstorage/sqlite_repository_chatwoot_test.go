@@ -309,3 +309,61 @@ func TestSQLiteRepositoryChatwootForwardQueueLifecycle(t *testing.T) {
 		t.Fatalf("due after done len = %d, want 0", len(due))
 	}
 }
+
+func TestSQLiteRepositoryProcessorForwardQueueLifecycleIsDeviceAndSessionScoped(t *testing.T) {
+	repo := newTestSQLiteRepository(t)
+	now := time.Date(2026, time.June, 6, 10, 0, 0, 0, time.UTC)
+
+	event := &domainChatStorage.ProcessorForwardEvent{
+		DeviceID:          "device-a@s.whatsapp.net",
+		SessionID:         "session-a",
+		EventName:         "message",
+		WhatsAppMessageID: "wa-processor-1",
+		PayloadJSON:       `{"session_id":"session-a","payload":{"id":"wa-processor-1"}}`,
+		LastError:         "processor down",
+		NextAttemptAt:     now,
+	}
+	if err := repo.EnqueueProcessorForwardEvent(event); err != nil {
+		t.Fatalf("enqueue processor retry: %v", err)
+	}
+
+	// The same WhatsApp ID remains a different durable item for another
+	// device/session; retries must never cross the tuple boundary.
+	if err := repo.EnqueueProcessorForwardEvent(&domainChatStorage.ProcessorForwardEvent{
+		DeviceID:          "device-b@s.whatsapp.net",
+		SessionID:         "session-b",
+		EventName:         "message",
+		WhatsAppMessageID: "wa-processor-1",
+		PayloadJSON:       `{"session_id":"session-b","payload":{"id":"wa-processor-1"}}`,
+		NextAttemptAt:     now,
+	}); err != nil {
+		t.Fatalf("enqueue second scoped processor retry: %v", err)
+	}
+
+	due, err := repo.ListDueProcessorForwardEvents(now, 10)
+	if err != nil {
+		t.Fatalf("list due processor retries: %v", err)
+	}
+	if len(due) != 2 {
+		t.Fatalf("due processor retry count = %d, want 2", len(due))
+	}
+	if due[0].SessionID == due[1].SessionID || due[0].DeviceID == due[1].DeviceID {
+		t.Fatalf("processor retries lost device/session scope: %+v", due)
+	}
+
+	nextAttempt := now.Add(2 * time.Minute)
+	if err := repo.MarkProcessorForwardEventFailed(due[0].ID, "still down", nextAttempt); err != nil {
+		t.Fatalf("mark processor retry failed: %v", err)
+	}
+	if err := repo.MarkProcessorForwardEventDone(due[1].ID); err != nil {
+		t.Fatalf("mark processor retry done: %v", err)
+	}
+
+	due, err = repo.ListDueProcessorForwardEvents(nextAttempt, 10)
+	if err != nil {
+		t.Fatalf("list rescheduled processor retry: %v", err)
+	}
+	if len(due) != 1 || due[0].Attempts != 1 || due[0].LastError != "still down" || due[0].SessionID != "session-a" {
+		t.Fatalf("unexpected rescheduled processor retry: %+v", due)
+	}
+}
