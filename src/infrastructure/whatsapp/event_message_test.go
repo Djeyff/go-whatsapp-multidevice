@@ -57,7 +57,10 @@ func TestConfiguredWebhookInstanceIdentityRequiresMatchingAllowedPair(t *testing
 		compat  string
 		want    string
 	}{
-		{name: "matching normalized allowed pair", primary: " GOWA-BLUE ", compat: "gowa-blue", want: "gowa-blue"},
+		{name: "matching normalized allowed blue pair", primary: " GOWA-BLUE ", compat: "gowa-blue", want: "gowa-blue"},
+		{name: "matching normalized allowed main pair", primary: "gowa-main", compat: " GOWA-MAIN ", want: "gowa-main"},
+		{name: "both empty", primary: "", compat: "", want: ""},
+		{name: "both whitespace", primary: " 	", compat: "\n", want: ""},
 		{name: "primary only", primary: "gowa-blue", compat: "", want: ""},
 		{name: "compatibility only", primary: "", compat: "gowa-blue", want: ""},
 		{name: "conflicting pair", primary: "gowa-blue", compat: "gowa-main", want: ""},
