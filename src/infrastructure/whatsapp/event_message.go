@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -29,9 +30,22 @@ const (
 
 // WebhookEvent is the top-level structure for webhook payloads
 type WebhookEvent struct {
-	Event    string         `json:"event"`
-	DeviceID string         `json:"device_id"`
-	Payload  map[string]any `json:"payload"`
+	Event      string         `json:"event"`
+	DeviceID   string         `json:"device_id"`
+	InstanceID string         `json:"instance_id,omitempty"`
+	Payload    map[string]any `json:"payload"`
+}
+
+func configuredWebhookInstanceIdentity() string {
+	primary := strings.ToLower(strings.TrimSpace(os.Getenv("GOWA_INSTANCE_ID")))
+	compat := strings.ToLower(strings.TrimSpace(os.Getenv("RETENA_GOWA_INSTANCE_ID")))
+	if primary == "" || compat == "" || primary != compat {
+		return ""
+	}
+	if primary != "gowa-main" && primary != "gowa-blue" {
+		return ""
+	}
+	return primary
 }
 
 type webhookContactPayload struct {
@@ -52,6 +66,9 @@ func forwardMessageToWebhook(ctx context.Context, client *whatsmeow.Client, evt 
 		"device_id": webhookEvent.DeviceID,
 		"payload":   webhookEvent.Payload,
 	}
+	if webhookEvent.InstanceID != "" {
+		payload["instance_id"] = webhookEvent.InstanceID
+	}
 
 	return forwardPayloadToConfiguredWebhooks(ctx, payload, webhookEvent.Event)
 }
@@ -66,8 +83,9 @@ func isReactionMessage(evt *events.Message) bool {
 
 func createWebhookEvent(ctx context.Context, client *whatsmeow.Client, evt *events.Message) (*WebhookEvent, error) {
 	webhookEvent := &WebhookEvent{
-		Event:   EventTypeMessage,
-		Payload: make(map[string]any),
+		Event:      EventTypeMessage,
+		InstanceID: configuredWebhookInstanceIdentity(),
+		Payload:    make(map[string]any),
 	}
 
 	// Set device_id
