@@ -2,6 +2,13 @@ package whatsapp
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -40,6 +47,129 @@ func TestBuildEventPayloadIncludesIsFromMe(t *testing.T) {
 		t.Fatalf("expected is_from_me in payload")
 	} else if isFromMe, ok := value.(bool); !ok || !isFromMe {
 		t.Fatalf("expected is_from_me=true, got %v", value)
+	}
+}
+
+func TestConfiguredWebhookInstanceIdentityRequiresMatchingAllowedPair(t *testing.T) {
+	tests := []struct {
+		name    string
+		primary string
+		compat  string
+		want    string
+	}{
+		{name: "matching normalized allowed blue pair", primary: " GOWA-BLUE ", compat: "gowa-blue", want: "gowa-blue"},
+		{name: "matching normalized allowed main pair", primary: "gowa-main", compat: " GOWA-MAIN ", want: "gowa-main"},
+		{name: "both empty", primary: "", compat: "", want: ""},
+		{name: "both whitespace", primary: " 	", compat: "\n", want: ""},
+		{name: "primary only", primary: "gowa-blue", compat: "", want: ""},
+		{name: "compatibility only", primary: "", compat: "gowa-blue", want: ""},
+		{name: "conflicting pair", primary: "gowa-blue", compat: "gowa-main", want: ""},
+		{name: "invalid pair", primary: "gowa-other", compat: "gowa-other", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GOWA_INSTANCE_ID", tt.primary)
+			t.Setenv("RETENA_GOWA_INSTANCE_ID", tt.compat)
+			if got := configuredWebhookInstanceIdentity(); got != tt.want {
+				t.Fatalf("configured webhook instance identity = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateWebhookEventIncludesConfiguredInstanceIdentity(t *testing.T) {
+	t.Setenv("GOWA_INSTANCE_ID", "gowa-blue")
+	t.Setenv("RETENA_GOWA_INSTANCE_ID", "gowa-blue")
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:   types.NewJID("123", types.DefaultUserServer),
+				Sender: types.NewJID("123", types.DefaultUserServer),
+			},
+			ID:        "INSTANCE-ID-TEST",
+			Timestamp: time.Date(2026, time.February, 8, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{Conversation: protoString("hello")},
+	}
+
+	webhookEvent, err := createWebhookEvent(context.Background(), nil, evt)
+	if err != nil {
+		t.Fatalf("create webhook event: %v", err)
+	}
+	encoded, err := json.Marshal(webhookEvent)
+	if err != nil {
+		t.Fatalf("marshal webhook event: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatalf("unmarshal webhook event: %v", err)
+	}
+	if got := body["instance_id"]; got != "gowa-blue" {
+		t.Fatalf("instance_id = %#v, want gowa-blue", got)
+	}
+}
+
+func TestForwardMessageToWebhookSignsConfiguredInstanceIdentity(t *testing.T) {
+	originalWebhookURLs := config.WhatsappWebhook
+	originalWebhookEvents := config.WhatsappWebhookEvents
+	originalWebhookSecret := config.WhatsappWebhookSecret
+	originalChatwootEnabled := config.ChatwootEnabled
+	originalSubmit := submitWebhookFn
+	defer func() {
+		config.WhatsappWebhook = originalWebhookURLs
+		config.WhatsappWebhookEvents = originalWebhookEvents
+		config.WhatsappWebhookSecret = originalWebhookSecret
+		config.ChatwootEnabled = originalChatwootEnabled
+		submitWebhookFn = originalSubmit
+	}()
+
+	t.Setenv("GOWA_INSTANCE_ID", "gowa-blue")
+	t.Setenv("RETENA_GOWA_INSTANCE_ID", "gowa-blue")
+	config.WhatsappWebhookEvents = nil
+	config.ChatwootEnabled = false
+	config.WhatsappWebhookSecret = "instance-identity-test-secret"
+	submitWebhookFn = submitWebhook
+
+	type receivedRequest struct {
+		body      []byte
+		signature string
+	}
+	received := make(chan receivedRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read forwarded request body: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		received <- receivedRequest{body: body, signature: r.Header.Get("X-Hub-Signature-256")}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	config.WhatsappWebhook = []string{server.URL}
+
+	if err := forwardMessageToWebhook(context.Background(), nil, textEventForTest("signed-instance", types.NewJID("123", types.DefaultUserServer))); err != nil {
+		t.Fatalf("forward message to webhook: %v", err)
+	}
+
+	select {
+	case got := <-received:
+		var body map[string]any
+		if err := json.Unmarshal(got.body, &body); err != nil {
+			t.Fatalf("decode signed webhook body: %v", err)
+		}
+		if body["instance_id"] != "gowa-blue" {
+			t.Fatalf("forwarded instance_id = %#v, want gowa-blue", body["instance_id"])
+		}
+		mac := hmac.New(sha256.New, []byte(config.WhatsappWebhookSecret))
+		_, _ = mac.Write(got.body)
+		wantSignature := "sha256=" + fmt.Sprintf("%x", mac.Sum(nil))
+		if !hmac.Equal([]byte(got.signature), []byte(wantSignature)) {
+			t.Fatalf("signature = %q, want %q", got.signature, wantSignature)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for signed webhook request")
 	}
 }
 
