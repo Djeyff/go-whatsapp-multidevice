@@ -2,7 +2,6 @@ package whatsapp
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -110,7 +109,7 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	}
 
 	// Configure device properties
-	osName := fmt.Sprintf("%s %s", config.AppOs, config.AppVersion)
+	osName := config.LinkedDeviceDisplayName()
 	store.DeviceProps.PlatformType = &config.AppPlatform
 	store.DeviceProps.Os = &osName
 

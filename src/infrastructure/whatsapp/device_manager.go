@@ -1039,7 +1039,7 @@ func (m *DeviceManager) configureKeysStore(ctx context.Context, device *store.De
 }
 
 func configureDeviceProps() {
-	osName := fmt.Sprintf("%s %s", config.AppOs, config.AppVersion)
+	osName := config.LinkedDeviceDisplayName()
 	store.DeviceProps.PlatformType = &config.AppPlatform
 	store.DeviceProps.Os = &osName
 }

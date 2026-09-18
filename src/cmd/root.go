@@ -126,7 +126,7 @@ func initEnvConfig() {
 		config.AppDebug = envDebug
 	}
 	if envOs := viper.GetString("app_os"); envOs != "" {
-		config.AppOs = envOs
+		config.ApplyLinkedDeviceOsOverride(envOs)
 	}
 	if envBasicAuth := viper.GetString("app_basic_auth"); envBasicAuth != "" {
 		credential := strings.Split(envBasicAuth, ",")
