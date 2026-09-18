@@ -8,10 +8,14 @@ import (
 
 var (
 	AppVersion                              = "v8.10.0"
+	// RetenaProductVersion is the user-visible Retena product version, not GOWA's
+	// AppVersion. Linked devices must show this so support can tell which build
+	// a phone is talking to.
+	RetenaProductVersion                    = "2.2.1"
 	AppPort                                 = "3000"
 	AppHost                                 = "0.0.0.0"
-AppDebug                                = false
-AppOs                                   = "Retena"
+	AppDebug                                = false
+	AppOs                                   = "Retena"
 AppPlatform                             = waCompanionReg.DeviceProps_DESKTOP
 AppBasicAuthCredential                  []string
 	AppBasePath                             = ""

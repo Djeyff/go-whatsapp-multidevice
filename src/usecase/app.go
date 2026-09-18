@@ -203,7 +203,7 @@ func (service *serviceApp) LoginWithCode(ctx context.Context, deviceID string, p
 
 	logrus.Infof("[LOGIN_CODE][%s] Starting phone pairing after QR readiness", deviceID)
 	loginCode, err = pairPhoneAfterReadiness(ctx, session, func(pairCtx context.Context) (string, error) {
-		return client.PairPhone(pairCtx, phoneNumber, true, whatsmeow.PairClientOtherWebClient, "Chrome (Linux)")
+		return client.PairPhone(pairCtx, phoneNumber, true, whatsmeow.PairClientOtherWebClient, config.LinkedDeviceDisplayName())
 	})
 	if err != nil {
 		logrus.Warnf("[LOGIN_CODE][%s] phone pairing failed", deviceID)
