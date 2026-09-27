@@ -367,6 +367,31 @@ func TestSyncKeysDeviceUsesValueEquality(t *testing.T) {
 	}
 }
 
+func TestConfigureKeysStoreFailsClosedWhenKeyCacheIsClosed(t *testing.T) {
+	ctx := context.Background()
+	primaryStore := newTestSQLStore(t)
+	keysStore := newTestSQLStore(t)
+	jid := types.NewADJID("6281777777777", types.WhatsAppDomain, 51)
+	device := newTestStoreDevice(primaryStore, jid, "primary")
+	if err := device.Save(ctx); err != nil {
+		t.Fatalf("save primary device: %v", err)
+	}
+	if err := keysStore.Close(); err != nil {
+		t.Fatalf("close key-cache store: %v", err)
+	}
+
+	manager := NewDeviceManager(primaryStore, keysStore, nil)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("configure key-cache store panicked: %v", recovered)
+		}
+	}()
+
+	if err := manager.configureKeysStore(ctx, device); err == nil {
+		t.Fatal("expected closed key-cache store to prevent configuration")
+	}
+}
+
 func TestSyncKeysDeviceMatchesAcrossADAndNonADFormats(t *testing.T) {
 	ctx := context.Background()
 	primaryStore := newTestSQLStore(t)
