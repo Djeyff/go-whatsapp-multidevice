@@ -420,11 +420,15 @@ func restServer(_ *cobra.Command, _ []string) {
 	})
 
 	app.Post("/debug/sentry", func(c *fiber.Ctx) error {
-		message, ok := observability.CaptureSyntheticSentry("go-whatsapp-multidevice", map[string]string{
+		tags := map[string]string{
 			"smoke":          "true",
-			"service":        "go-whatsapp-multidevice",
+			"service":        sentryServiceTag(),
 			"correlation_id": fmt.Sprint(c.Locals("correlation_id")),
-		}, map[string]any{
+		}
+		for key, value := range sentryBlueTags() {
+			tags[key] = value
+		}
+		message, ok := observability.CaptureSyntheticSentry(sentryServiceTag(), tags, map[string]any{
 			"route":          "/debug/sentry",
 			"version":        config.AppVersion,
 			"commit":         firstNonEmpty(os.Getenv("COMMIT_SHA"), os.Getenv("GIT_COMMIT"), "unknown"),

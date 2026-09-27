@@ -91,6 +91,24 @@ func init() {
 }
 
 // initEnvConfig loads configuration from environment variables
+func sentryBlueTags() map[string]string {
+	instanceID, ok, _ := gowaHealthInstanceIdentity()
+	if !ok || instanceID != "gowa-blue" {
+		return nil
+	}
+	return map[string]string{
+		"color":   "blue",
+		"service": "gowa-blue",
+	}
+}
+
+func sentryServiceTag() string {
+	if tags := sentryBlueTags(); tags != nil {
+		return tags["service"]
+	}
+	return "go-whatsapp-multidevice"
+}
+
 func initSentry() {
 	dsn := os.Getenv("SENTRY_DSN")
 	if dsn == "" {
@@ -107,6 +125,13 @@ func initSentry() {
 	if err != nil {
 		logrus.Warnf("[sentry] init failed: %v", err)
 		return
+	}
+	if tags := sentryBlueTags(); tags != nil {
+		sentry.ConfigureScope(func(scope *sentry.Scope) {
+			for key, value := range tags {
+				scope.SetTag(key, value)
+			}
+		})
 	}
 	logrus.Info("[sentry] initialized")
 }
