@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -251,6 +252,43 @@ func TestSyncKeysDeviceUsesPersistedParentJIDForNonADLookup(t *testing.T) {
 	keyCacheStore := sqlstore.NewSQLStore(keysStore, keyCacheJID)
 	if _, err := keyCacheStore.GenOnePreKey(ctx); err != nil {
 		t.Fatalf("write prekey through persisted key-cache parent: %v", err)
+	}
+}
+
+func TestConfigureKeysStoreUsesPersistedADParentForNonADDeviceID(t *testing.T) {
+	ctx := context.Background()
+	primaryStore := newTestSQLStore(t)
+	keysStore := newTestSQLStore(t)
+	persistedJID := types.NewADJID("6281222222225", types.WhatsAppDomain, 26)
+	persistedDevice := newTestStoreDevice(primaryStore, persistedJID, "primary")
+	if err := persistedDevice.Save(ctx); err != nil {
+		t.Fatalf("save primary device: %v", err)
+	}
+
+	device := newTestStoreDevice(primaryStore, persistedJID.ToNonAD(), "non-ad-device")
+	manager := NewDeviceManager(primaryStore, keysStore, nil)
+	if err := manager.configureKeysStore(ctx, device); err != nil {
+		t.Fatalf("configure key-cache store: %v", err)
+	}
+
+	if device.PreKeys == nil || device.Sessions == nil {
+		t.Fatal("expected prekey and session stores to be configured")
+	}
+	preKeyStore := reflect.ValueOf(device.PreKeys)
+	sessionStore := reflect.ValueOf(device.Sessions)
+	if preKeyStore.Kind() != reflect.Ptr || sessionStore.Kind() != reflect.Ptr || preKeyStore.Pointer() != sessionStore.Pointer() {
+		t.Fatal("expected prekey and session stores to use the same key-cache backend")
+	}
+	if _, err := device.PreKeys.GenOnePreKey(ctx); err != nil {
+		t.Fatalf("write prekey through configured key-cache store: %v", err)
+	}
+
+	storedDevice, err := keysStore.GetDevice(ctx, persistedJID)
+	if err != nil {
+		t.Fatalf("get persisted key-cache parent: %v", err)
+	}
+	if storedDevice == nil || storedDevice.ID == nil || storedDevice.ID.String() != persistedJID.String() {
+		t.Fatalf("key-cache parent = %v, want persisted AD JID %s", storedDevice, persistedJID)
 	}
 }
 
