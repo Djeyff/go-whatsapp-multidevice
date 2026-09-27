@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -32,9 +33,9 @@ var (
 	startupTime   = time.Now().Unix()
 )
 
-func syncKeysDevice(ctx context.Context, db, keysDB *sqlstore.Container, targetJID ...types.JID) {
+func syncKeysDevice(ctx context.Context, db, keysDB *sqlstore.Container, targetJID ...types.JID) (types.JID, error) {
 	if db == nil || keysDB == nil {
-		return
+		return types.EmptyJID, fmt.Errorf("primary and key-cache stores are required")
 	}
 
 	var dev *store.Device
@@ -45,31 +46,38 @@ func syncKeysDevice(ctx context.Context, db, keysDB *sqlstore.Container, targetJ
 		dev, err = db.GetFirstDevice(ctx)
 	}
 	if err != nil {
-		log.Errorf("Failed to get all devices: %v", err)
-		return
+		return types.EmptyJID, fmt.Errorf("find primary device: %w", err)
 	}
 	if dev == nil || dev.ID == nil {
-		return
+		return types.EmptyJID, fmt.Errorf("primary device was not found")
 	}
 
-	found := false
 	devs, err := keysDB.GetAllDevices(ctx)
 	if err != nil {
-		log.Errorf("Failed to get all devices: %v", err)
-		return
+		return types.EmptyJID, fmt.Errorf("list key-cache devices: %w", err)
 	}
 	for _, d := range devs {
 		if d != nil && d.ID != nil && d.ID.ToNonAD().String() == dev.ID.ToNonAD().String() {
-			found = true
-			break
+			return *d.ID, nil
 		}
 		if len(targetJID) == 0 && d != nil {
-			keysDB.DeleteDevice(ctx, d)
+			if err := keysDB.DeleteDevice(ctx, d); err != nil {
+				return types.EmptyJID, fmt.Errorf("remove stale key-cache device: %w", err)
+			}
 		}
 	}
-	if !found {
-		keysDB.PutDevice(ctx, dev)
+	if err := keysDB.PutDevice(ctx, dev); err != nil {
+		return types.EmptyJID, fmt.Errorf("create key-cache device: %w", err)
 	}
+
+	stored, err := keysDB.GetDevice(ctx, *dev.ID)
+	if err != nil {
+		return types.EmptyJID, fmt.Errorf("verify key-cache device: %w", err)
+	}
+	if stored == nil || stored.ID == nil {
+		return types.EmptyJID, fmt.Errorf("key-cache device %s was not persisted", dev.ID)
+	}
+	return *stored.ID, nil
 }
 
 func findStoreDeviceByJID(ctx context.Context, db *sqlstore.Container, jid types.JID) (*store.Device, error) {
@@ -117,17 +125,16 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	primaryDB := storeContainer
 	keysContainer := keysStoreContainer
 
-	// Configure a separated database for accelerating encryption caching
+	// Configure a separated database for accelerating encryption caching.
+	// The key-cache device row is the parent for session and prekey rows, so
+	// leave the primary stores in place unless synchronization completed.
 	if keysContainer != nil && device.ID != nil {
-		innerStore := sqlstore.NewSQLStore(keysStoreContainer, *device.ID)
-
-		syncKeysDevice(ctx, primaryDB, keysContainer, *device.ID)
-		device.Identities = innerStore
-		device.Sessions = innerStore
-		device.PreKeys = innerStore
-		device.SenderKeys = innerStore
-		device.MsgSecrets = innerStore
-		device.PrivacyTokens = innerStore
+		keyCacheJID, err := syncKeysDevice(ctx, primaryDB, keysContainer, *device.ID)
+		if err != nil {
+			log.Errorf("Failed to synchronize key-cache device; using primary store: %v", err)
+		} else {
+			applyKeyCacheStore(device, sqlstore.NewSQLStore(keysContainer, keyCacheJID))
+		}
 	}
 
 	instanceID := ""

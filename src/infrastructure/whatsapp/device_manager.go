@@ -1026,15 +1026,12 @@ func (m *DeviceManager) configureKeysStore(ctx context.Context, device *store.De
 		return nil
 	}
 
-	innerStore := sqlstore.NewSQLStore(m.keys, *device.ID)
-	syncKeysDevice(ctx, m.store, m.keys, *device.ID)
+	keyCacheJID, err := syncKeysDevice(ctx, m.store, m.keys, *device.ID)
+	if err != nil {
+		return err
+	}
 
-	device.Identities = innerStore
-	device.Sessions = innerStore
-	device.PreKeys = innerStore
-	device.SenderKeys = innerStore
-	device.MsgSecrets = innerStore
-	device.PrivacyTokens = innerStore
+	applyKeyCacheStore(device, sqlstore.NewSQLStore(m.keys, keyCacheJID))
 	return nil
 }
 
