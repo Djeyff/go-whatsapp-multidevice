@@ -869,6 +869,12 @@ paths:
             type: boolean
           example: false
           description: Whether to fetch a community avatar
+        - name: existing_id
+          in: query
+          schema:
+            type: string
+          example: '1635239861'
+          description: Last known picture ID. If the photo has not changed, results.unchanged is true and url/id are empty.
       responses:
         '200':
           description: OK
@@ -3964,6 +3970,10 @@ components:
             type:
               type: string
               example: 'image'
+            unchanged:
+              type: boolean
+              example: true
+              description: True when existing_id still matches the current photo (whatsmeow ExistingID no-op)
     UserPrivacyResponse:
       type: object
       properties:
