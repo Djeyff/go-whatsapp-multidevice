@@ -30,6 +30,7 @@ The following events can be received via webhook:
 | `newsletter.message` | New message(s) posted in a newsletter                   |
 | `newsletter.mute`    | Newsletter mute setting changed                         |
 | `call.offer`         | Incoming call received                                  |
+| `picture`            | Contact or group profile photo changed or removed       |
 
 ## Event Filtering
 
@@ -58,6 +59,9 @@ WHATSAPP_WEBHOOK_EVENTS=newsletter.joined,newsletter.left,newsletter.message,new
 
 # Receive call events
 WHATSAPP_WEBHOOK_EVENTS=call.offer
+
+# Receive profile-photo change/remove events (no image bytes)
+WHATSAPP_WEBHOOK_EVENTS=picture
 
 # Receive all group and newsletter events
 WHATSAPP_WEBHOOK_EVENTS=group.participants,group.joined,newsletter.joined,newsletter.left,newsletter.message
@@ -145,7 +149,7 @@ All webhook payloads follow a consistent top-level structure:
 
 | **Field**    | **Type** | **Description**                                                                                                     |
 |--------------|----------|---------------------------------------------------------------------------------------------------------------------|
-| `event`      | string   | Event type: `message`, `message.reaction`, `message.revoked`, `message.edited`, `message.ack`, `message.deleted`, `chat_presence`, `group.participants`, `group.joined`, `label.edit`, `label.association`, `newsletter.joined`, `newsletter.left`, `newsletter.message`, `newsletter.mute`, `call.offer` |
+| `event`      | string   | Event type: `message`, `message.reaction`, `message.revoked`, `message.edited`, `message.ack`, `message.deleted`, `chat_presence`, `group.participants`, `group.joined`, `label.edit`, `label.association`, `newsletter.joined`, `newsletter.left`, `newsletter.message`, `newsletter.mute`, `call.offer`, `picture` |
 | `device_id`  | string   | JID of the device that received this event (e.g., `628123456789@s.whatsapp.net`)                                    |
 | `session_id` | string   | Session ID registered via `POST /devices` (e.g., `org_2`), for correlating the event back to a tenant. Omitted when the JID can't be mapped to a session. |
 | `payload`    | object   | Event-specific payload data                                                                                         |
@@ -645,6 +649,35 @@ Triggered when you mute or unmute a newsletter.
 | `payload.messages[].timestamp` | string   | Message timestamp                                       |
 | `payload.messages[].views_count`| number  | Number of views (if available)                          |
 | `payload.messages[].reaction_counts`| object | Reaction emoji counts (if available)                 |
+
+## Picture Events
+
+`picture` is emitted when WhatsApp notifies that a contact or group profile photo changed or was removed. The payload does **not** include image bytes or a download URL. Fetch the photo with `GET /user/avatar?phone=…&existing_id=…&is_preview=true` only after this event (or on first-seen). Passing `existing_id` uses whatsmeow `ExistingID`: unchanged photos return `results.unchanged=true` with empty `url`/`id`.
+
+```json
+{
+  "event": "picture",
+  "device_id": "628123456789@s.whatsapp.net",
+  "timestamp": "2026-09-28T18:00:00Z",
+  "payload": {
+    "jid": "18095550123@s.whatsapp.net",
+    "author": "18095550999@s.whatsapp.net",
+    "timestamp": "2026-09-28T18:00:00Z",
+    "remove": false,
+    "picture_id": "1635239861"
+  }
+}
+```
+
+| **Field**            | **Type** | **Description**                                      |
+|----------------------|----------|------------------------------------------------------|
+| `event`              | string   | Always `"picture"`                                   |
+| `payload.jid`        | string   | Contact or group whose photo changed                 |
+| `payload.author`     | string   | Who changed it (when present)                        |
+| `payload.remove`     | boolean  | `true` if the photo was removed                      |
+| `payload.picture_id` | string   | New picture ID; omitted when `remove` is true        |
+
+Do not poll `/user/avatar` from this handler. The webhook itself must not trigger an IQ.
 
 ## Call Events
 

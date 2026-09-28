@@ -149,6 +149,7 @@ func (service serviceUser) Avatar(ctx context.Context, request domainUser.Avatar
 	pic, err := client.GetProfilePictureInfo(avatarCtx, dataWaRecipient, &whatsmeow.GetProfilePictureParams{
 		Preview:     request.IsPreview,
 		IsCommunity: isCommunity,
+		ExistingID:  request.ExistingID,
 	})
 	if err != nil {
 		if avatarCtx.Err() == context.DeadlineExceeded {
@@ -170,6 +171,7 @@ func (service serviceUser) Avatar(ctx context.Context, request domainUser.Avatar
 			pic, err = client.GetProfilePictureInfo(avatarCtx2, dataWaRecipient, &whatsmeow.GetProfilePictureParams{
 				Preview:     request.IsPreview,
 				IsCommunity: false,
+				ExistingID:  request.ExistingID,
 			})
 			if err != nil {
 				if avatarCtx2.Err() == context.DeadlineExceeded {
@@ -186,14 +188,21 @@ func (service serviceUser) Avatar(ctx context.Context, request domainUser.Avatar
 		}
 	}
 
-	if pic == nil {
-		return response, errors.New("no avatar found")
-	}
+	return avatarResponseFromPicture(pic, request.ExistingID)
+}
 
-	response.URL = pic.URL
-	response.ID = pic.ID
-	response.Type = pic.Type
-	return response, nil
+func avatarResponseFromPicture(pic *types.ProfilePictureInfo, existingID string) (domainUser.AvatarResponse, error) {
+	if pic == nil {
+		if strings.TrimSpace(existingID) != "" {
+			return domainUser.AvatarResponse{Unchanged: true}, nil
+		}
+		return domainUser.AvatarResponse{}, errors.New("no avatar found")
+	}
+	return domainUser.AvatarResponse{
+		URL:  pic.URL,
+		ID:   pic.ID,
+		Type: pic.Type,
+	}, nil
 }
 
 // MyListGroups returns all groups the user has joined.
