@@ -140,6 +140,7 @@ Download:
   | `newsletter.message` | New message(s) posted in a newsletter         |
   | `newsletter.mute`    | Newsletter mute setting changed               |
   | `call.offer`         | Incoming call received                        |
+  | `picture`            | Contact or group photo changed or removed     |
 
   If not configured (empty), all events will be forwarded.
 - **Webhook TLS Configuration**

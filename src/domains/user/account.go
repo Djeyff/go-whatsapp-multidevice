@@ -36,12 +36,14 @@ type AvatarRequest struct {
 	Phone       string `json:"phone" query:"phone"`
 	IsPreview   bool   `json:"is_preview" query:"is_preview"`
 	IsCommunity bool   `json:"is_community" query:"is_community"`
+	ExistingID  string `json:"existing_id" query:"existing_id"`
 }
 
 type AvatarResponse struct {
-	URL  string `json:"url"`
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	URL       string `json:"url"`
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Unchanged bool   `json:"unchanged,omitempty"`
 }
 
 type MyPrivacySettingResponse struct {
