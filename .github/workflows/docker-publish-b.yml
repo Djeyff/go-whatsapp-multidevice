@@ -1,0 +1,45 @@
+name: Build & Push GOWA B image
+
+on:
+  push:
+    branches: [deploy/gowa-b]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify GOWA B image tag contract
+        run: bash scripts/verify-gowa-b-image-tags.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push B image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            COMMIT_SHA=${{ github.sha }}
+          tags: |
+            ghcr.io/djeyff/go-whatsapp-multidevice:b
+            ghcr.io/djeyff/go-whatsapp-multidevice:b-${{ github.sha }}
+          cache-from: type=gha,scope=gowa-b
+          cache-to: type=gha,mode=max,scope=gowa-b
