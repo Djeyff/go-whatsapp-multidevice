@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestResolveDocumentMIME(t *testing.T) {
 }
 
 func TestNormalizeSendErrorMapsReachoutTimelock(t *testing.T) {
-	err := normalizeSendError(errors.Join(whatsmeow.ErrServerReturnedError, errors.New("server returned error 463")))
+	err := normalizeWhatsAppError(errors.Join(whatsmeow.ErrServerReturnedError, errors.New("server returned error 463")))
 
 	genericErr, ok := err.(pkgError.GenericError)
 	if !ok {
@@ -98,6 +99,58 @@ func TestNormalizeSendErrorMapsReachoutTimelock(t *testing.T) {
 	}
 	if got := genericErr.Error(); got != string(pkgError.ErrWaReachoutTimelock) {
 		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
+func TestNormalizeSendErrorMapsRateLimit(t *testing.T) {
+	// Message-send path: whatsmeow formats server rejections as
+	// fmt.Errorf("%w %d", ErrServerReturnedError, code) → "server returned error 464".
+	err := normalizeWhatsAppError(fmt.Errorf("%w %d", whatsmeow.ErrServerReturnedError, 464))
+
+	genericErr, ok := err.(pkgError.GenericError)
+	if !ok {
+		t.Fatalf("expected generic error, got %T", err)
+	}
+	if got := genericErr.ErrCode(); got != "WA_RATE_LIMITED" {
+		t.Fatalf("expected WA_RATE_LIMITED code, got %q", got)
+	}
+	if got := genericErr.StatusCode(); got != http.StatusTooManyRequests {
+		t.Fatalf("expected status %d, got %d", http.StatusTooManyRequests, got)
+	}
+	if got := genericErr.Error(); got != string(pkgError.ErrWaRateLimited) {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+
+	// Info-query path: 429 rate-overlimit from any WhatsApp call.
+	iqErr := normalizeWhatsAppError(&whatsmeow.IQError{Code: 429, Text: "rate-overlimit"})
+	iqGeneric, ok := iqErr.(pkgError.GenericError)
+	if !ok {
+		t.Fatalf("expected generic error, got %T", iqErr)
+	}
+	if got := iqGeneric.ErrCode(); got != "WA_RATE_LIMITED" {
+		t.Fatalf("expected WA_RATE_LIMITED code for IQ 429, got %q", got)
+	}
+}
+
+func TestNormalizeSendErrorKeepsOtherErrorsAsIs(t *testing.T) {
+	// 463 stays reachout timelock; unrelated errors must not be reclassified.
+	cases := []struct {
+		name string
+		in   error
+	}{
+		{"server 500", errors.Join(whatsmeow.ErrServerReturnedError, errors.New("server returned error 500"))},
+		{"plain error", errors.New("connection refused")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeWhatsAppError(tc.in)
+			if got != tc.in {
+				t.Fatalf("expected error to be returned unchanged (%T), got %T", tc.in, got)
+			}
+			if _, isGeneric := got.(pkgError.GenericError); isGeneric {
+				t.Fatalf("unrelated error %v must not be reclassified as a generic API error", tc.in)
+			}
+		})
 	}
 }
 

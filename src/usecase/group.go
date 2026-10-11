@@ -35,7 +35,7 @@ func (service serviceGroup) JoinGroupWithLink(ctx context.Context, request domai
 
 	jid, err := client.JoinGroupWithLink(ctx, request.Link)
 	if err != nil {
-		return
+		return groupID, normalizeWhatsAppError(err)
 	}
 	return jid.String(), nil
 }
@@ -83,7 +83,7 @@ func (service serviceGroup) CreateGroup(ctx context.Context, request domainGroup
 
 	groupInfo, err := client.CreateGroup(ctx, groupConfig)
 	if err != nil {
-		return
+		return "", normalizeWhatsAppError(err)
 	}
 
 	return groupInfo.JID.String(), nil
@@ -102,7 +102,7 @@ func (service serviceGroup) GetGroupInfoFromLink(ctx context.Context, request do
 
 	groupInfo, err := client.GetGroupInfoFromLink(ctx, request.Link)
 	if err != nil {
-		return response, err
+		return response, normalizeWhatsAppError(err)
 	}
 
 	response = domainGroup.GetGroupInfoFromLinkResponse{
@@ -143,7 +143,7 @@ func (service serviceGroup) ManageParticipant(ctx context.Context, request domai
 
 	participants, err := client.UpdateGroupParticipants(ctx, groupJID, participantsJID, request.Action)
 	if err != nil {
-		return result, err
+		return result, normalizeWhatsAppError(err)
 	}
 
 	for _, participant := range participants {
@@ -182,7 +182,7 @@ func (service serviceGroup) GetGroupParticipants(ctx context.Context, request do
 
 	groupInfo, err := client.GetGroupInfo(ctx, groupJID)
 	if err != nil {
-		return response, err
+		return response, normalizeWhatsAppError(err)
 	}
 
 	response.GroupID = groupJID.String()
@@ -229,7 +229,7 @@ func (service serviceGroup) GetGroupRequestParticipants(ctx context.Context, req
 
 	participants, err := client.GetGroupRequestParticipants(ctx, groupJID)
 	if err != nil {
-		return result, err
+		return result, normalizeWhatsAppError(err)
 	}
 
 	userInfo := userInfoMapForJIDs(ctx, client, jidsForGetUserInfoWireJIDs(ctx, client, participants))
@@ -271,7 +271,7 @@ func (service serviceGroup) ManageGroupRequestParticipants(ctx context.Context, 
 
 	participants, err := client.UpdateGroupRequestParticipants(ctx, groupJID, participantsJID, request.Action)
 	if err != nil {
-		return result, err
+		return result, normalizeWhatsAppError(err)
 	}
 
 	for _, participant := range participants {
@@ -350,7 +350,7 @@ func (service serviceGroup) SetGroupPhoto(ctx context.Context, request domainGro
 	pictureID, err = client.SetGroupPhoto(ctx, groupJID, photoBytes)
 	if err != nil {
 		logrus.Printf("Failed to set group photo: %v", err)
-		return pictureID, err
+		return pictureID, normalizeWhatsAppError(err)
 	}
 
 	return pictureID, nil
@@ -453,7 +453,7 @@ func (service serviceGroup) GroupInfo(ctx context.Context, request domainGroup.G
 	// Fetch group information from WhatsApp
 	groupInfo, err := client.GetGroupInfo(ctx, groupJID)
 	if err != nil {
-		return response, err
+		return response, normalizeWhatsAppError(err)
 	}
 
 	// Map the response
@@ -482,7 +482,7 @@ func (service serviceGroup) GetGroupInviteLink(ctx context.Context, request doma
 
 	inviteLink, err := client.GetGroupInviteLink(ctx, groupJID, request.Reset)
 	if err != nil {
-		return response, err
+		return response, normalizeWhatsAppError(err)
 	}
 
 	response = domainGroup.GetGroupInviteLinkResponse{
