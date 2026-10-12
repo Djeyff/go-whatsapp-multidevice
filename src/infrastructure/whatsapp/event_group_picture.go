@@ -72,33 +72,45 @@ func handleGroupPictureChange(ctx context.Context, evt *events.GroupInfo, device
 // change. Returns remove, the new picture id ("" when unknown), and whether a
 // picture change was found.
 //
-// Mirrors whatsmeow's own picture-notification parsing: a "delete" marker means
-// the photo was removed, while "picture" (and picture-ish "add"/"set") nodes
-// carry the new picture id in their "id" attribute. Unrelated unknown nodes
-// yield no event, so ordinary group changes never emit a picture webhook.
+// Typed shapes first: a "delete" marker means the photo was removed; "picture"
+// / "add" / "set" nodes carry the new picture id in their "id" attribute.
+//
+// Fall back to the spec's fetch-on-event path: WhatsApp's live wire shape for
+// group photo changes does not always match the typed picture nodes (observed
+// live 2026-10-12: a Familia Prueba photo change produced zero matches). When
+// the notification carries unknown change(s) but NO typed change of any kind,
+// treat it as a possible photo change and emit with no picture id — the
+// consumer fetches the avatar on the event itself. The api layer debounces
+// per group (60s window), so occasional spurious emissions are cheap; a photo
+// change must never be swallowed for want of a guessed node shape.
 func extractGroupPictureChange(unknownChanges []*waBinary.Node) (remove bool, pictureID string, found bool) {
+	sawUnknown := false
 	for _, node := range unknownChanges {
 		if node == nil {
 			continue
 		}
+		sawUnknown = true
 
 		if node.Tag == "delete" {
 			return true, "", true
 		}
-		if node.Tag != "picture" && node.Tag != "add" && node.Tag != "set" {
-			continue
-		}
+		if node.Tag == "picture" || node.Tag == "add" || node.Tag == "set" {
+			id, _ := node.Attrs["id"].(string)
 
-		id, _ := node.Attrs["id"].(string)
-
-		// A delete marker may ride as a nested child instead of the node tag.
-		if id == "" {
-			if _, hasDelete := node.GetOptionalChildByTag("delete"); hasDelete {
-				return true, "", true
+			// A delete marker may ride as a nested child instead of the node tag.
+			if id == "" {
+				if _, hasDelete := node.GetOptionalChildByTag("delete"); hasDelete {
+					return true, "", true
+				}
 			}
-		}
 
-		return false, id, true
+			return false, id, true
+		}
+	}
+
+	// Shape-agnostic fallback: unknown change(s) present, no typed change matched.
+	if sawUnknown {
+		return false, "", true
 	}
 	return false, "", false
 }

@@ -65,12 +65,14 @@ func TestExtractGroupPictureChange(t *testing.T) {
 			wantRemove: true,
 		},
 		{
-			name: "unrelated unknown node is ignored",
+			name: "unrelated unknown nodes trigger fetch-on-event fallback",
 			unknownChanges: []*waBinary.Node{
 				pictureNode("membership_approval_mode", waBinary.Attrs{}),
 				pictureNode("foo", waBinary.Attrs{"bar": "baz"}),
 			},
-			wantFound: false,
+			wantFound:     true,
+			wantRemove:    false,
+			wantPictureID: "",
 		},
 		{
 			name:           "no unknown changes",
@@ -193,14 +195,25 @@ func TestHandleGroupPictureChangeGuardAndIgnored(t *testing.T) {
 		}
 	})
 
-	t.Run("unrelated unknown changes do not forward", func(t *testing.T) {
+	t.Run("unknown untyped changes forward fetch-on-event", func(t *testing.T) {
+		config.WhatsappWebhook = []string{"https://webhook.example.com/hook"}
 		evt := groupPictureFixture()
 		evt.UnknownChanges = []*waBinary.Node{{Tag: "some_future_feature", Attrs: waBinary.Attrs{"x": "y"}}}
 		handleGroupPictureChange(context.Background(), evt, "device_1", nil)
 		select {
 		case body := <-called:
-			t.Fatalf("unexpected forward for unrelated node: %#v", body)
-		case <-time.After(200 * time.Millisecond):
+			payload, _ := body["payload"].(map[string]any)
+			if payload == nil {
+				t.Fatalf("malformed forward payload: %#v", body)
+			}
+			if id, _ := payload["picture_id"].(string); id != "" {
+				t.Fatalf("fetch-on-event emission must not carry picture_id, got %q", id)
+			}
+			if rm, _ := payload["remove"].(bool); rm {
+				t.Fatal("fetch-on-event emission must not be remove")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("fetch-on-event emission never forwarded for untyped unknown change")
 		}
 	})
 
