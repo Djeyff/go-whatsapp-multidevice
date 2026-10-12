@@ -74,6 +74,7 @@ func handler(ctx context.Context, instance *DeviceInstance, rawEvt any) {
 	case *events.AppState:
 		handleAppState(ctx, evt, instance.JID(), client)
 	case *events.GroupInfo:
+		handleGroupPictureChange(ctx, evt, instance.JID(), client)
 		handleGroupInfo(ctx, evt, instance.JID(), client)
 	case *events.JoinedGroup:
 		handleJoinedGroup(ctx, evt, instance.JID(), client)
