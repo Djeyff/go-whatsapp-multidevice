@@ -2,6 +2,9 @@ package whatsapp
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +16,56 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
+// debugGroupEvents, when true (env RETENA_DEBUG_GROUP_EVENTS=true), logs one
+// line per GroupInfo event with its raw shape — used to see the live w:gp2
+// wire format once in an instrumented Blue build. Never enable outside a
+// dedicated debug deployment.
+var debugGroupEvents = os.Getenv("RETENA_DEBUG_GROUP_EVENTS") == "true"
+
+func debugDumpGroupInfo(evt *events.GroupInfo) {
+	if !debugGroupEvents || evt == nil {
+		return
+	}
+	server := evt.JID.Server
+	if server != types.GroupServer {
+		logrus.Infof("[debug-group] GroupInfo jid=%s server=%s NON-GROUP-SERVER unknown=%d", evt.JID.String(), server, len(evt.UnknownChanges))
+		return
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[debug-group] GroupInfo jid=%s unknown=%d", evt.JID.String(), len(evt.UnknownChanges)))
+	if evt.Sender != nil {
+		sb.WriteString(" sender=" + evt.Sender.String())
+	}
+	sb.WriteString(" name_change=" + strconv.FormatBool(evt.Name != nil) +
+		" delete=" + strconv.FormatBool(evt.Delete != nil) +
+		" promote=" + strconv.Itoa(len(evt.Promote)) +
+		" demote=" + strconv.Itoa(len(evt.Demote)))
+	for i, node := range evt.UnknownChanges {
+		if i >= 8 {
+			sb.WriteString(fmt.Sprintf(" [+%d more]", len(evt.UnknownChanges)-i))
+			break
+		}
+		if node == nil {
+			sb.WriteString(" <nil>")
+			continue
+		}
+		sb.WriteString(" <" + node.Tag)
+		for k, v := range node.Attrs {
+			sb.WriteString(fmt.Sprintf(" %s=%v", k, v))
+		}
+		children := node.GetChildren()
+		for _, c := range children {
+			sb.WriteString(" {" + c.Tag)
+			for k, v := range c.Attrs {
+				sb.WriteString(fmt.Sprintf(" %s=%v", k, v))
+			}
+			sb.WriteString("}")
+		}
+		sb.WriteString(">")
+	}
+	logrus.Info(sb.String())
+}
+
 // handleGroupPictureChange detects a group photo change inside an events.GroupInfo
 // and emits the same picture webhook the profile-picture path already sends.
 //
@@ -22,6 +75,7 @@ import (
 //
 // Fire-and-forget: never blocks or panics the notification loop.
 func handleGroupPictureChange(ctx context.Context, evt *events.GroupInfo, deviceID string, client *whatsmeow.Client) {
+	debugDumpGroupInfo(evt)
 	if evt == nil || evt.JID.Server != types.GroupServer {
 		return
 	}
