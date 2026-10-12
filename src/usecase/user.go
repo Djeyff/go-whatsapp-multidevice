@@ -69,7 +69,7 @@ func (service serviceUser) Info(ctx context.Context, request domainUser.InfoRequ
 	jids = append(jids, dataWaRecipient)
 	resp, err := client.GetUserInfo(ctx, jids)
 	if err != nil {
-		return response, err
+		return response, normalizeWhatsAppError(err)
 	}
 
 	// Get device ID for scoped storage lookup
