@@ -74,6 +74,7 @@ func handler(ctx context.Context, instance *DeviceInstance, rawEvt any) {
 	case *events.AppState:
 		handleAppState(ctx, evt, instance.JID(), client)
 	case *events.GroupInfo:
+		handleGroupPictureChange(ctx, evt, instance.JID(), client)
 		handleGroupInfo(ctx, evt, instance.JID(), client)
 	case *events.JoinedGroup:
 		handleJoinedGroup(ctx, evt, instance.JID(), client)
@@ -87,6 +88,8 @@ func handler(ctx context.Context, instance *DeviceInstance, rawEvt any) {
 		handleNewsletterMuteChange(ctx, evt, instance.JID(), client)
 	case *events.CallOffer:
 		handleCallOffer(ctx, evt, chatStorageRepo, instance.JID(), client)
+	case *events.Picture:
+		handlePicture(ctx, evt, instance.JID(), client)
 	}
 
 	instance.UpdateStateFromClient()
