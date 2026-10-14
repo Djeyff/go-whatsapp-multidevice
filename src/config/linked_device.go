@@ -27,6 +27,14 @@ func LinkedDeviceDisplayName() string {
 	return "Retena " + version
 }
 
+// PairingClientDisplayName is the name sent to WhatsApp while requesting a
+// phone-code. The server requires `Browser (OS)` and returns 400 bad-request
+// for any other shape. LinkedDeviceDisplayName stays the label shown after
+// the link succeeds.
+func PairingClientDisplayName() string {
+	return "Chrome (Linux)"
+}
+
 func isBlueGowaInstance() bool {
 	for _, raw := range []string{
 		os.Getenv("GOWA_INSTANCE_ID"),
