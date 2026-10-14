@@ -2,6 +2,9 @@ package whatsapp
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +16,56 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
+// debugGroupEvents, when true (env RETENA_DEBUG_GROUP_EVENTS=true), logs one
+// line per GroupInfo event with its raw shape — used to see the live w:gp2
+// wire format once in an instrumented Blue build. Never enable outside a
+// dedicated debug deployment.
+var debugGroupEvents = os.Getenv("RETENA_DEBUG_GROUP_EVENTS") == "true"
+
+func debugDumpGroupInfo(evt *events.GroupInfo) {
+	if !debugGroupEvents || evt == nil {
+		return
+	}
+	server := evt.JID.Server
+	if server != types.GroupServer {
+		logrus.Infof("[debug-group] GroupInfo jid=%s server=%s NON-GROUP-SERVER unknown=%d", evt.JID.String(), server, len(evt.UnknownChanges))
+		return
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[debug-group] GroupInfo jid=%s unknown=%d", evt.JID.String(), len(evt.UnknownChanges)))
+	if evt.Sender != nil {
+		sb.WriteString(" sender=" + evt.Sender.String())
+	}
+	sb.WriteString(" name_change=" + strconv.FormatBool(evt.Name != nil) +
+		" delete=" + strconv.FormatBool(evt.Delete != nil) +
+		" promote=" + strconv.Itoa(len(evt.Promote)) +
+		" demote=" + strconv.Itoa(len(evt.Demote)))
+	for i, node := range evt.UnknownChanges {
+		if i >= 8 {
+			sb.WriteString(fmt.Sprintf(" [+%d more]", len(evt.UnknownChanges)-i))
+			break
+		}
+		if node == nil {
+			sb.WriteString(" <nil>")
+			continue
+		}
+		sb.WriteString(" <" + node.Tag)
+		for k, v := range node.Attrs {
+			sb.WriteString(fmt.Sprintf(" %s=%v", k, v))
+		}
+		children := node.GetChildren()
+		for _, c := range children {
+			sb.WriteString(" {" + c.Tag)
+			for k, v := range c.Attrs {
+				sb.WriteString(fmt.Sprintf(" %s=%v", k, v))
+			}
+			sb.WriteString("}")
+		}
+		sb.WriteString(">")
+	}
+	logrus.Info(sb.String())
+}
+
 // handleGroupPictureChange detects a group photo change inside an events.GroupInfo
 // and emits the same picture webhook the profile-picture path already sends.
 //
@@ -22,6 +75,7 @@ import (
 //
 // Fire-and-forget: never blocks or panics the notification loop.
 func handleGroupPictureChange(ctx context.Context, evt *events.GroupInfo, deviceID string, client *whatsmeow.Client) {
+	debugDumpGroupInfo(evt)
 	if evt == nil || evt.JID.Server != types.GroupServer {
 		return
 	}
@@ -72,33 +126,45 @@ func handleGroupPictureChange(ctx context.Context, evt *events.GroupInfo, device
 // change. Returns remove, the new picture id ("" when unknown), and whether a
 // picture change was found.
 //
-// Mirrors whatsmeow's own picture-notification parsing: a "delete" marker means
-// the photo was removed, while "picture" (and picture-ish "add"/"set") nodes
-// carry the new picture id in their "id" attribute. Unrelated unknown nodes
-// yield no event, so ordinary group changes never emit a picture webhook.
+// Typed shapes first: a "delete" marker means the photo was removed; "picture"
+// / "add" / "set" nodes carry the new picture id in their "id" attribute.
+//
+// Fall back to the spec's fetch-on-event path: WhatsApp's live wire shape for
+// group photo changes does not always match the typed picture nodes (observed
+// live 2026-10-12: a Familia Prueba photo change produced zero matches). When
+// the notification carries unknown change(s) but NO typed change of any kind,
+// treat it as a possible photo change and emit with no picture id — the
+// consumer fetches the avatar on the event itself. The api layer debounces
+// per group (60s window), so occasional spurious emissions are cheap; a photo
+// change must never be swallowed for want of a guessed node shape.
 func extractGroupPictureChange(unknownChanges []*waBinary.Node) (remove bool, pictureID string, found bool) {
+	sawUnknown := false
 	for _, node := range unknownChanges {
 		if node == nil {
 			continue
 		}
+		sawUnknown = true
 
 		if node.Tag == "delete" {
 			return true, "", true
 		}
-		if node.Tag != "picture" && node.Tag != "add" && node.Tag != "set" {
-			continue
-		}
+		if node.Tag == "picture" || node.Tag == "add" || node.Tag == "set" {
+			id, _ := node.Attrs["id"].(string)
 
-		id, _ := node.Attrs["id"].(string)
-
-		// A delete marker may ride as a nested child instead of the node tag.
-		if id == "" {
-			if _, hasDelete := node.GetOptionalChildByTag("delete"); hasDelete {
-				return true, "", true
+			// A delete marker may ride as a nested child instead of the node tag.
+			if id == "" {
+				if _, hasDelete := node.GetOptionalChildByTag("delete"); hasDelete {
+					return true, "", true
+				}
 			}
-		}
 
-		return false, id, true
+			return false, id, true
+		}
+	}
+
+	// Shape-agnostic fallback: unknown change(s) present, no typed change matched.
+	if sawUnknown {
+		return false, "", true
 	}
 	return false, "", false
 }
