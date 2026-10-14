@@ -29,6 +29,16 @@ func TestLinkedDeviceDisplayNameBlueUsesRetenaProductVersion(t *testing.T) {
 	}
 }
 
+func TestPairingClientDisplayNameIsBrowserOS(t *testing.T) {
+	got := PairingClientDisplayName()
+	if got != "Chrome (Linux)" {
+		t.Fatalf("PairingClientDisplayName() = %q, want Chrome (Linux)", got)
+	}
+	if got == LinkedDeviceDisplayName() {
+		t.Fatalf("pairing name must not reuse the linked-device label %q", got)
+	}
+}
+
 func TestApplyLinkedDeviceOsOverrideIgnoresChrome(t *testing.T) {
 	previous := AppOs
 	t.Cleanup(func() { AppOs = previous })
