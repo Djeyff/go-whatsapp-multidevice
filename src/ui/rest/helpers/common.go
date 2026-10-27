@@ -7,11 +7,26 @@ import (
 	"time"
 
 	domainApp "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/app"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/sirupsen/logrus"
 	"go.mau.fi/whatsmeow"
 )
 
-func SetAutoConnectAfterBooting(service domainApp.IAppUsecase) {
+// autoConnectService is the narrow slice of IAppUsecase that boot-time
+// auto-connect needs; satisfied structurally by the app usecase so tests can
+// drive the loop with a stub.
+type autoConnectService interface {
+	FetchDevices(ctx context.Context) ([]domainApp.DevicesResponse, error)
+	Reconnect(ctx context.Context, deviceID string) error
+}
+
+// shouldAutoConnectFn is the auto-connect identity gate (RET-427-FU7b):
+// sessions with no registered device record, or marked disconnected by the
+// optional identity service, are skipped+warned instead of connected. Seam
+// for tests, same defer/restore idiom as the fork's other test seams.
+var shouldAutoConnectFn = whatsapp.ShouldAutoConnect
+
+func SetAutoConnectAfterBooting(service autoConnectService) {
 	time.Sleep(2 * time.Second)
 	devices, err := service.FetchDevices(context.Background())
 	if err != nil || len(devices) == 0 {
@@ -21,9 +36,21 @@ func SetAutoConnectAfterBooting(service domainApp.IAppUsecase) {
 	attempted := 0
 	connected := 0
 	staleSessionDeleted := 0
+	skippedNoRecord := 0
+	skippedIdentityDisconnected := 0
 	failed := 0
 	for _, device := range devices {
 		attempted++
+		verdict := shouldAutoConnectFn(context.Background(), device.Device, device.JID)
+		if !verdict.Allow {
+			switch verdict.Reason {
+			case whatsapp.AutoConnectSkipNoRegisteredRecord:
+				skippedNoRecord++
+			case whatsapp.AutoConnectSkipIdentityDisconnected:
+				skippedIdentityDisconnected++
+			}
+			continue
+		}
 		if err := service.Reconnect(context.Background(), device.Device); err != nil {
 			if IsAutoConnectSessionDeleted(err) {
 				staleSessionDeleted++
@@ -38,10 +65,12 @@ func SetAutoConnectAfterBooting(service domainApp.IAppUsecase) {
 		}
 	}
 	fields := logrus.Fields{
-		"attempted":             attempted,
-		"connected":             connected,
-		"stale_session_deleted": staleSessionDeleted,
-		"failed":                failed,
+		"attempted":                     attempted,
+		"connected":                     connected,
+		"stale_session_deleted":         staleSessionDeleted,
+		"skipped_no_registered_record":  skippedNoRecord,
+		"skipped_identity_disconnected": skippedIdentityDisconnected,
+		"failed":                        failed,
 	}
 	if failed > 0 {
 		logrus.WithFields(fields).Warn("auto-connect completed with failures")
