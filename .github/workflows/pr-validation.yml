@@ -19,4 +19,8 @@ jobs:
           go-version-file: src/go.mod
       - name: Run focused GOWA validation
         working-directory: ./src
+        env:
+          # mattn/go-sqlite3 (store tests) requires cgo; gcc present on the
+          # fsn1 self-hosted runner since RET-427-FU7b.
+          CGO_ENABLED: "1"
         run: go test ./infrastructure/whatsapp ./cmd ./config ./ui/rest/helpers
