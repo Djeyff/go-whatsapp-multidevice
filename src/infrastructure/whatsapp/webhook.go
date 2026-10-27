@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
@@ -15,7 +16,25 @@ import (
 	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/sirupsen/logrus"
+	"go.mau.fi/whatsmeow/types"
 )
+
+// webhookDeviceRef derives the X-Gowa-Device-Ref value for a webhook forward:
+// safeLogRef("device", ToNonAD(jid)) — sha256("device\0"+jid+"\0") first 6
+// bytes, hex — exactly the device_ref the fork logs in telemetry, so
+// processors can correlate forwards with telemetry by string equality.
+// Empty (header omitted) when the payload carries no device_id.
+func webhookDeviceRef(payload map[string]any) string {
+	deviceID, _ := payload["device_id"].(string)
+	if strings.TrimSpace(deviceID) == "" {
+		return ""
+	}
+	identity := deviceID
+	if parsed, err := types.ParseJID(deviceID); err == nil {
+		identity = parsed.ToNonAD().String()
+	}
+	return safeLogRef("device", identity)
+}
 
 func submitWebhook(ctx context.Context, payload map[string]any, url string, webhookConfig *chatstorage.DeviceWebhookConfig) error {
 	// Determine effective config - use device-specific if set, otherwise fall back to global
@@ -60,6 +79,13 @@ func submitWebhook(ctx context.Context, payload map[string]any, url string, webh
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", fmt.Sprintf("sha256=%s", signature))
+	// Session identity stamp (RET-427-FU7b): processors fence on the SESSION
+	// (device_ref), not only the instance id, so a stale clone holding the
+	// same webhook secret + instance id can no longer impersonate this
+	// deployment's sessions. Same hash form as telemetry device_ref.
+	if ref := webhookDeviceRef(payload); ref != "" {
+		req.Header.Set("X-Gowa-Device-Ref", ref)
+	}
 
 	var attempt int
 	var maxAttempts = 5

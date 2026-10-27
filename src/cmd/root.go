@@ -195,6 +195,9 @@ func initEnvConfig() {
 	if eventWebhookSecret := viper.GetString("retena_session_event_webhook_secret"); eventWebhookSecret != "" {
 		config.RetenaSessionEventWebhookSecret = eventWebhookSecret
 	}
+	if identityURL := viper.GetString("retena_auto_connect_identity_url"); identityURL != "" {
+		config.RetenaAutoConnectIdentityURL = identityURL
+	}
 
 	// Database settings
 	if envDBURI := viper.GetString("db_uri"); envDBURI != "" {

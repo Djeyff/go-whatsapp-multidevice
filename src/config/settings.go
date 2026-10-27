@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	AppVersion                              = "v8.10.0"
+	AppVersion = "v8.10.0"
 	// RetenaProductVersion is the user-visible Retena product version, not GOWA's
 	// AppVersion. Linked devices must show this so support can tell which build
 	// a phone is talking to.
@@ -16,8 +16,8 @@ var (
 	AppHost                                 = "0.0.0.0"
 	AppDebug                                = false
 	AppOs                                   = "Retena"
-AppPlatform                             = waCompanionReg.DeviceProps_DESKTOP
-AppBasicAuthCredential                  []string
+	AppPlatform                             = waCompanionReg.DeviceProps_DESKTOP
+	AppBasicAuthCredential                  []string
 	AppBasePath                             = ""
 	AppTrustedProxies                       []string // Trusted proxy IP ranges (e.g., "0.0.0.0/0" for all, or specific CIDRs)
 	HistorySyncWriteFiles                   = false
@@ -29,6 +29,7 @@ AppBasicAuthCredential                  []string
 	RetenaProtectedGowaDeviceIDs            []string
 	RetenaSessionEventWebhook               = ""
 	RetenaSessionEventWebhookSecret         = ""
+	RetenaAutoConnectIdentityURL            = "" // optional identity-service check for auto-connect (default off)
 
 	McpPort = "8080"
 	McpHost = "localhost"
