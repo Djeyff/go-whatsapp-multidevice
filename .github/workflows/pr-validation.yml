@@ -1,0 +1,26 @@
+name: PR validation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    # Self-hosted runner on retena-fsn1 (dedicated to this repo; default labels).
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: src/go.mod
+      - name: Run focused GOWA validation
+        working-directory: ./src
+        env:
+          # mattn/go-sqlite3 (store tests) requires cgo; gcc present on the
+          # fsn1 self-hosted runner since RET-427-FU7b.
+          CGO_ENABLED: "1"
+        run: go test ./infrastructure/whatsapp ./cmd ./config ./ui/rest/helpers
