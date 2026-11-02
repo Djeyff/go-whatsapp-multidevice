@@ -126,20 +126,39 @@ func (service serviceUser) Avatar(ctx context.Context, request domainUser.Avatar
 		return response, pkgError.ErrWaCLI
 	}
 
-	err = validations.ValidateUserAvatar(ctx, request)
-	if err != nil {
-		return response, err
-	}
+	// LID branch: when a LID param is supplied, the LID JID is addressed directly
+	// (identity-correct). ValidateJidWithLogin intentionally resolves @lid JIDs
+	// back to phone JIDs, which is wrong for LID-scoped profile-picture lookups
+	// under WhatsApp's LID migration.
+	requestingByLID := strings.TrimSpace(request.LID) != ""
+	var dataWaRecipient types.JID
+	if requestingByLID {
+		if strings.TrimSpace(request.Phone) != "" {
+			return response, pkgError.InvalidJID("pass either phone or lid, not both")
+		}
+		lidJID, parseErr := utils.ParseLIDParam(request.LID)
+		if parseErr != nil {
+			return response, pkgError.InvalidJID(parseErr.Error())
+		}
+		utils.MustLogin(client)
+		dataWaRecipient = lidJID
+	} else {
+		err = validations.ValidateUserAvatar(ctx, request)
+		if err != nil {
+			return response, err
+		}
 
-	dataWaRecipient, err := utils.ValidateJidWithLogin(client, request.Phone)
-	if err != nil {
-		return response, err
+		dataWaRecipient, err = utils.ValidateJidWithLogin(client, request.Phone)
+		if err != nil {
+			return response, err
+		}
 	}
 
 	// IsCommunity should only be true for group JIDs (communities)
 	// For regular user JIDs (@s.whatsapp.net), force IsCommunity to false to prevent timeout
+	// LID JIDs are user identities, so they are treated the same way.
 	isCommunity := request.IsCommunity
-	if dataWaRecipient.Server == types.DefaultUserServer {
+	if dataWaRecipient.Server == types.DefaultUserServer || dataWaRecipient.Server == "lid" {
 		isCommunity = false
 	}
 
@@ -203,6 +222,37 @@ func avatarResponseFromPicture(pic *types.ProfilePictureInfo, existingID string)
 		ID:   pic.ID,
 		Type: pic.Type,
 	}, nil
+}
+
+// LidLookup resolves a phone JID to its LID JID using the device LID store
+// (whatsmeow's Store.LIDs, backed by the whatsmeow_lid_map table). It lets API
+// callers fetch the LID identity mapping without direct store access. When the
+// phone has no mapped LID, the response has mapped=false and no lid field —
+// not an error — so callers can fail open to the phone-JID fetch path.
+func (service serviceUser) LidLookup(ctx context.Context, request domainUser.LidLookupRequest) (response domainUser.LidLookupResponse, err error) {
+	// Validate the request input first (pure): bad phones must 400 before any
+	// client/device state is consulted.
+	pn, err := utils.ParseJID(request.Phone)
+	if err != nil {
+		return response, pkgError.InvalidJID(err.Error())
+	}
+	if pn.Server != types.DefaultUserServer || pn.User == "" {
+		return response, pkgError.InvalidJID(fmt.Sprintf("phone %s must resolve to a @s.whatsapp.net JID", request.Phone))
+	}
+
+	client := whatsapp.ClientFromContext(ctx)
+	if client == nil {
+		return response, pkgError.ErrWaCLI
+	}
+	utils.MustLogin(client)
+
+	response.Phone = pn.User
+	lid := utils.ResolvePhoneToLID(ctx, pn, client)
+	if !lid.IsEmpty() && lid.Server == "lid" {
+		response.LID = lid.String()
+		response.Mapped = true
+	}
+	return response, nil
 }
 
 // MyListGroups returns all groups the user has joined.

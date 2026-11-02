@@ -27,6 +27,22 @@ func TestValidateUserAvatar(t *testing.T) {
 			err: nil,
 		},
 		{
+			name: "should success with lid only (RET-535-FU)",
+			args: args{request: domainUser.AvatarRequest{
+				LID:         "123456789012345@lid",
+				IsPreview:   false,
+				IsCommunity: false,
+			}},
+			err: nil,
+		},
+		{
+			name: "should success with bare digit lid only (RET-535-FU)",
+			args: args{request: domainUser.AvatarRequest{
+				LID: "123456789012345",
+			}},
+			err: nil,
+		},
+		{
 			name: "should error with empty phone",
 			args: args{request: domainUser.AvatarRequest{
 				Phone:       "",

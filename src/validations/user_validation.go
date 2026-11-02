@@ -21,7 +21,9 @@ func ValidateUserInfo(ctx context.Context, request domainUser.InfoRequest) error
 }
 func ValidateUserAvatar(ctx context.Context, request domainUser.AvatarRequest) error {
 	err := validation.ValidateStructWithContext(ctx, &request,
-		validation.Field(&request.Phone, validation.Required),
+		// Phone is required only when no LID was supplied: the LID branch of the
+		// avatar fetch addresses the contact identity directly via <digits>@lid.
+		validation.Field(&request.Phone, validation.When(request.LID == "", validation.Required)),
 		validation.Field(&request.IsCommunity, validation.When(request.IsCommunity, validation.Required, validation.In(true, false))),
 		validation.Field(&request.IsPreview, validation.When(request.IsPreview, validation.Required, validation.In(true, false))),
 	)

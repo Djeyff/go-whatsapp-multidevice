@@ -15,6 +15,7 @@ func InitRestUser(app fiber.Router, service domainUser.IUserUsecase) User {
 	rest := User{Service: service}
 	app.Get("/user/info", rest.UserInfo)
 	app.Get("/user/avatar", rest.UserAvatar)
+	app.Get("/user/lid", rest.UserLid)
 	app.Post("/user/avatar", rest.UserChangeAvatar)
 	app.Post("/user/pushname", rest.UserChangePushName)
 	app.Get("/user/my/privacy", rest.UserMyPrivacySetting)
@@ -63,6 +64,28 @@ func (controller *User) UserAvatar(c *fiber.Ctx) error {
 		Status:  200,
 		Code:    "SUCCESS",
 		Message: "Success get avatar",
+		Results: response,
+	})
+}
+
+func (controller *User) UserLid(c *fiber.Ctx) error {
+	var request domainUser.LidLookupRequest
+	err := c.QueryParser(&request)
+	utils.PanicIfNeeded(err)
+
+	// Bare digits become a @s.whatsapp.net JID; >15-digit garbage becomes a
+	// group JID, which the usecase rejects with InvalidJID.
+	utils.SanitizePhone(&request.Phone)
+
+	ctx := whatsapp.ContextWithDevice(c.UserContext(), getDeviceFromCtx(c))
+
+	response, err := controller.Service.LidLookup(ctx, request)
+	utils.PanicIfNeeded(err)
+
+	return c.JSON(utils.ResponseData{
+		Status:  200,
+		Code:    "SUCCESS",
+		Message: "Success lookup lid",
 		Results: response,
 	})
 }
