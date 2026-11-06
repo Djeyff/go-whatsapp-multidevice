@@ -34,9 +34,20 @@ type InfoResponse struct {
 
 type AvatarRequest struct {
 	Phone       string `json:"phone" query:"phone"`
+	LID         string `json:"lid" query:"lid"`
 	IsPreview   bool   `json:"is_preview" query:"is_preview"`
 	IsCommunity bool   `json:"is_community" query:"is_community"`
 	ExistingID  string `json:"existing_id" query:"existing_id"`
+}
+
+type LidLookupRequest struct {
+	Phone string `json:"phone" query:"phone"`
+}
+
+type LidLookupResponse struct {
+	Phone  string `json:"phone"`
+	LID    string `json:"lid,omitempty"`
+	Mapped bool   `json:"mapped"`
 }
 
 type AvatarResponse struct {

@@ -14,6 +14,7 @@ type IUserInfo interface {
 // IUserProfile handles user profile operations
 type IUserProfile interface {
 	Avatar(ctx context.Context, request AvatarRequest) (response AvatarResponse, err error)
+	LidLookup(ctx context.Context, request LidLookupRequest) (response LidLookupResponse, err error)
 	ChangeAvatar(ctx context.Context, request ChangeAvatarRequest) (err error)
 	ChangePushName(ctx context.Context, request ChangePushNameRequest) (err error)
 }

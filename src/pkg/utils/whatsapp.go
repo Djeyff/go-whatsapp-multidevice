@@ -779,6 +779,47 @@ func ParseJID(arg string) (types.JID, error) {
 	return recipient, nil
 }
 
+// ParseLIDParam parses a bare LID number or a full "<digits>@lid" JID into a LID JID.
+// Unlike ParseJID/ValidateJidWithLogin, this never resolves the LID back to a phone
+// JID: the returned JID keeps Server "lid" so downstream calls address the LID
+// identity directly (required for LID-correct avatar fetches under WhatsApp's
+// LID migration).
+func ParseLIDParam(raw string) (types.JID, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return types.JID{}, fmt.Errorf("lid is empty")
+	}
+	if strings.ContainsRune(raw, '@') {
+		jid, err := ParseJID(raw)
+		if err != nil {
+			return types.JID{}, err
+		}
+		if jid.Server != "lid" {
+			return types.JID{}, fmt.Errorf("JID %s is not a @lid JID", raw)
+		}
+		if jid.User == "" || !isAllDigits(jid.User) {
+			return types.JID{}, fmt.Errorf("invalid @lid JID %s: user must be digits", raw)
+		}
+		return jid, nil
+	}
+	if raw[0] == '+' || !isAllDigits(raw) {
+		return types.JID{}, fmt.Errorf("lid must be bare digits or a <digits>@lid JID, got %s", raw)
+	}
+	if len(raw) < 6 || len(raw) > 20 {
+		return types.JID{}, fmt.Errorf("lid digit length out of range: %d", len(raw))
+	}
+	return types.NewJID(raw, "lid"), nil
+}
+
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
 // FormatJID formats a JID string by removing any :number suffix
 func FormatJID(jid string) types.JID {
 	// Remove any :number suffix if present
