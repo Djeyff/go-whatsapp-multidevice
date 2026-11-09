@@ -1013,6 +1013,56 @@ func ResolveLIDToPhone(ctx context.Context, jid types.JID, client *whatsmeow.Cli
 	return jid
 }
 
+// lidLookupCandidates returns the pn digit strings to try against the device
+// LID map, in priority order:
+//  1. exact digits — whatsmeow stores the map pn as E.164 digits without '+'
+//     (the form WhatsApp itself writes during LID migration);
+//  2. device-CC-prefixed variants — contacts stored without a country code
+//     (national form) can never exact-match an E.164 row, so retry with the
+//     connected device's own country-code prefixes (1-3 leading digits of its
+//     own JID).
+//
+// Exact matches always win and current callers fail open on a total miss, so
+// behavior is unchanged for well-formed E.164 input. Every candidate is a
+// cheap indexed lookup; the slice is deduplicated and E.164-length capped so
+// a malformed input cannot cause a lookup storm. (RET-613: live-probed on
+// gowa-blue — LID-migrated contacts stored national (8292953856) missed the
+// exact row 18292953856 and the avatar gate wrongly finalized no-photo via
+// not_mapped.)
+func lidLookupCandidates(user string, ownUser string) []string {
+	base := onlyDigits(user)
+	if base == "" || len(base) > 15 {
+		return nil
+	}
+	seen := map[string]bool{base: true}
+	cands := []string{base}
+	own := onlyDigits(ownUser)
+	for n := 1; own != "" && n <= 3 && n < len(own); n++ {
+		cc := own[:n]
+		if strings.HasPrefix(base, cc) {
+			// base already carries this prefix; the exact form covered it
+			continue
+		}
+		cand := cc + base
+		if len(cand) > 15 || seen[cand] {
+			continue
+		}
+		seen[cand] = true
+		cands = append(cands, cand)
+	}
+	return cands
+}
+
+func onlyDigits(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // ResolvePhoneToLID converts @s.whatsapp.net JIDs to their corresponding @lid JIDs
 // Returns empty JID if it's not a user JID or if LID lookup fails
 func ResolvePhoneToLID(ctx context.Context, jid types.JID, client *whatsmeow.Client) types.JID {
@@ -1027,17 +1077,25 @@ func ResolvePhoneToLID(ctx context.Context, jid types.JID, client *whatsmeow.Cli
 		return types.JID{}
 	}
 
-	// Attempt to get the LID for this phone number
-	lid, err := client.Store.LIDs.GetLIDForPN(ctx, jid)
-	if err != nil {
-		logrus.Debugf("Failed to resolve phone %s to LID: %v", jid.String(), err)
-		return types.JID{}
+	// Try pn format variants (RET-613): exact E.164 first, then device-CC
+	// prefixed national forms. A miss on every candidate means the device has
+	// no mapping — callers fail open to the phone-JID path, as before.
+	var ownUser string
+	if client.Store.ID != nil {
+		ownUser = client.Store.ID.User
 	}
-
-	// If we got a valid LID, return it
-	if !lid.IsEmpty() {
-		logrus.Debugf("Resolved phone %s to LID %s", jid.String(), lid.String())
-		return lid
+	for _, cand := range lidLookupCandidates(jid.User, ownUser) {
+		candJID := jid
+		candJID.User = cand
+		lid, err := client.Store.LIDs.GetLIDForPN(ctx, candJID)
+		if err != nil {
+			logrus.Debugf("Failed to resolve phone %s (as %s) to LID: %v", jid.String(), cand, err)
+			continue
+		}
+		if !lid.IsEmpty() {
+			logrus.Debugf("Resolved phone %s to LID %s (query form %s)", jid.String(), lid.String(), cand)
+			return lid
+		}
 	}
 
 	return types.JID{}
